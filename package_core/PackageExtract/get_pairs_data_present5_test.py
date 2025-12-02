@@ -9,6 +9,7 @@ import operator
 import re
 from random import randint
 import copy
+from concurrent.futures import ThreadPoolExecutor
 from package_core.PackageExtract.yolox_onnx_py.onnx_QFP_pairs_data_location2 import begain_output_pairs_data_location
 # from yolox_onnx_py.onnx_output_other_location import begain_output_other_location
 from package_core.PackageExtract.yolox_onnx_py.onnx_output_serial_number_letter_location import begain_output_serial_number_letter_location
@@ -814,39 +815,82 @@ def get_better_data_1(top_yolox_pairs, bottom_yolox_pairs, side_yolox_pairs, det
     bottom_dbnet_data_all = bottom_dbnet_data.copy()
     return top_yolox_pairs, bottom_yolox_pairs, side_yolox_pairs, detailed_yolox_pairs, top_yolox_pairs_copy, bottom_yolox_pairs_copy, side_yolox_pairs_copy, detailed_yolox_pairs_copy, top_dbnet_data_all, bottom_dbnet_data_all
 
-
+#1202优化之后
+def process_view_ocr(view_name, dbnet_data):
+    """辅助函数：处理单个视图的 OCR"""
+    path = f"{DATA}/{view_name}.jpg"
+    if not os.path.exists(path):
+        return []
+    return ocr_data(path, dbnet_data)
 def SVTR(top_dbnet_data_all, bottom_dbnet_data_all, side_dbnet_data, detailed_dbnet_data):
-    print("---开始各个视图的SVTR识别---")
-    empty_data = []
+    print("---开始各个视图的SVTR识别 (并行优化版)---")
     start1 = time.time()
 
-    path = f"{DATA}/top.jpg"
-    if not os.path.exists(path):
-        top_ocr_data = empty_data
-    else:
-        top_ocr_data = ocr_data(path, top_dbnet_data_all)
+    # 定义任务列表
+    tasks = {
+        'top': top_dbnet_data_all,
+        'bottom': bottom_dbnet_data_all,
+        'side': side_dbnet_data,
+        'detailed': detailed_dbnet_data
+    }
 
-    path = f"{DATA}/bottom.jpg"
-    if not os.path.exists(path):
-            bottom_ocr_data = empty_data
-    else:
-        bottom_ocr_data = ocr_data(path, bottom_dbnet_data_all)
+    results = {}
 
-    path = f"{DATA}/side.jpg"
-    if not os.path.exists(path):
-            side_ocr_data = empty_data
-    else:
-        side_ocr_data = ocr_data(path, side_dbnet_data)
+    # 使用线程池并行处理 (IO密集型或ONNXRuntime释放GIL时有效)
+    # max_workers=4 对应 4 个视图
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        future_to_view = {
+            executor.submit(process_view_ocr, view, data): view
+            for view, data in tasks.items()
+        }
 
-    path = f"{DATA}/detailed.jpg"
-    if not os.path.exists(path):
-                detailed_ocr_data = empty_data
-    else:
-        detailed_ocr_data = ocr_data(path, detailed_dbnet_data)
+        for future in future_to_view:
+            view = future_to_view[future]
+            try:
+                data = future.result()
+                results[view] = data
+            except Exception as e:
+                print(f"视图 {view} OCR 识别出错: {e}")
+                results[view] = []
 
     print("---结束各个视图的SVTR识别---")
     end = time.time()
-    return start1, end, top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data
+
+    return start1, end, results['top'], results['bottom'], results['side'], results['detailed']
+
+#1202优化之前
+# def SVTR(top_dbnet_data_all, bottom_dbnet_data_all, side_dbnet_data, detailed_dbnet_data):
+#     print("---开始各个视图的SVTR识别---")
+#     empty_data = []
+#     start1 = time.time()
+#
+#     path = f"{DATA}/top.jpg"
+#     if not os.path.exists(path):
+#         top_ocr_data = empty_data
+#     else:
+#         top_ocr_data = ocr_data(path, top_dbnet_data_all)
+#
+#     path = f"{DATA}/bottom.jpg"
+#     if not os.path.exists(path):
+#             bottom_ocr_data = empty_data
+#     else:
+#         bottom_ocr_data = ocr_data(path, bottom_dbnet_data_all)
+#
+#     path = f"{DATA}/side.jpg"
+#     if not os.path.exists(path):
+#             side_ocr_data = empty_data
+#     else:
+#         side_ocr_data = ocr_data(path, side_dbnet_data)
+#
+#     path = f"{DATA}/detailed.jpg"
+#     if not os.path.exists(path):
+#                 detailed_ocr_data = empty_data
+#     else:
+#         detailed_ocr_data = ocr_data(path, detailed_dbnet_data)
+#
+#     print("---结束各个视图的SVTR识别---")
+#     end = time.time()
+#     return start1, end, top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data
 
 #1201优化后版本
 class OCRDataProcessor:
@@ -891,6 +935,8 @@ class OCRDataProcessor:
             text = self.re_note.sub('', text)
             if self.re_single_char.match(text):
                 text = self.re_single_char.sub('', text)
+
+            text = text.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1').replace('B', '8')
 
             # 更新清洗后的文本
             item['ocr_strings'] = text.strip()
@@ -1030,9 +1076,10 @@ def data_wrangling_optimized(key, top_dbnet_data, bottom_dbnet_data, side_dbnet_
     detailed_ocr_data = processor.filter_large_tolerance(detailed_ocr_data)
 
     # ... 后续的 BGA_side_filter 和 display 逻辑保持不变 ...
+    side_ocr_data = BGA_side_filter(side_ocr_data)
 
     return top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data
-#1201
+#1201优化之前
 def data_wrangling(key, top_dbnet_data, bottom_dbnet_data, side_dbnet_data, detailed_dbnet_data, top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data, top_yolox_num, bottom_yolox_num, side_yolox_num, detailed_yolox_num):
     # 编辑为字典类型
     top_ocr_data = convert_Dic(top_dbnet_data, top_ocr_data)
@@ -2044,48 +2091,118 @@ def get_pin_diameter(pitch_x, pitch_y, pin_x_number, pin_y_number, body_x, body_
 
     return pin_diameter  # numpy二维数组，可能不止一行
 
+#1202优化之后
 def clear_inch(ocr_data):
     '''
     清除key_info中inch标注，保留mm标注
-    :param ocr_data:
-    :return:
     '''
-    print("clear_inch之前\n", *ocr_data, sep='\n')
+    # print("clear_inch之前\n", *ocr_data, sep='\n') # 可选：减少打印以提升速度
     try:
-        # tolerance = 1e-3
-        for i in range(len(ocr_data)):
-            new_info = copy.deepcopy(ocr_data[i]["key_info"])
-            new_info = [[float(item) if item and item.replace('.', '', 1).isdigit() else item for item in sublist] for
-                        sublist in new_info]
-            for j in range(len(new_info)):
-                for k in range(len(new_info[j])):
+        for item in ocr_data:
+            # 展平当前 item 的 key_info 中的所有有效数值
+            # 格式转换：确保是 float
+            flat_values = []
+            valid_indices = []  # 记录 (row_idx, col_idx)
 
-                        for l in range(len(new_info)):
-                            for m in range(len(new_info[l])):
-                                try:
-                                    if new_info[j][k] < new_info[l][m]:
-                                        #动态容差
-                                        tolerance = 10**(math.log10(new_info[j][k]) - 2)
-                                        if abs(new_info[l][m] * 0.03937008 - new_info[j][k]) < tolerance:
-                                            # print(new_info[l][m], new_info[j][k])
-                                            new_info[j][k] = 'delete'
+            raw_info = item["key_info"]
 
+            # 第一步：解析所有数字，构建查找表
+            for r, sublist in enumerate(raw_info):
+                for c, val in enumerate(sublist):
+                    if isinstance(val, str):
+                        # 简单的数字检查
+                        if val.replace('.', '', 1).isdigit():
+                            val_float = float(val)
+                            flat_values.append(val_float)
+                            valid_indices.append((r, c))
+                    elif isinstance(val, (int, float)):
+                        flat_values.append(float(val))
+                        valid_indices.append((r, c))
 
-                                except:
-                                    pass
-            # 删除new_info中的'delete'
-            # print(new_info)
-            new_info = [[item for item in sublist if item != 'delete'] for sublist in new_info]
-            # print(new_info)
-            # 浮点数转为字符串
-            new_info = [[str(item) if isinstance(item, (int, float)) else item for item in sublist] for sublist in
-                        new_info]
-            # print(new_info)
-            ocr_data[i]["key_info"] = new_info
+            # 第二步：检查英寸关系
+            # 如果存在 B ~= A * 0.03937，则 A 是 mm (保留)，B 是 inch (删除)
+            # 或者 B = A / 25.4
+
+            indices_to_delete = set()
+
+            for i in range(len(flat_values)):
+                val_inch = flat_values[i]
+                for j in range(len(flat_values)):
+                    if i == j: continue
+                    val_mm = flat_values[j]
+
+                    # 避免除零错误
+                    if val_inch == 0: continue
+
+                    # 动态容差计算 (保持原有逻辑)
+                    tolerance = 10 ** (math.log10(val_inch) - 2) if val_inch > 0 else 1e-3
+
+                    # 检查 val_inch 是否是 val_mm 的英寸表示
+                    if abs(val_mm * 0.03937008 - val_inch) < tolerance:
+                        indices_to_delete.add(valid_indices[i])
+                        break  # 确定是英寸后，跳出内层循环
+
+            # 第三步：重构 key_info
+            if indices_to_delete:
+                new_key_info = []
+                for r, sublist in enumerate(raw_info):
+                    new_sublist = []
+                    for c, val in enumerate(sublist):
+                        if (r, c) not in indices_to_delete:
+                            new_sublist.append(val)
+                        # else: 被删除了
+                    if new_sublist:
+                        new_key_info.append(new_sublist)
+                item["key_info"] = new_key_info
+
     except Exception as e:
         print("删除英寸标注错误", e)
-    print("clear_inch之后\n", *ocr_data, sep='\n')
+
+    # print("clear_inch之后\n", *ocr_data, sep='\n')
     return ocr_data
+#1202优化之前
+# def clear_inch(ocr_data):
+#     '''
+#     清除key_info中inch标注，保留mm标注
+#     :param ocr_data:
+#     :return:
+#     '''
+#     print("clear_inch之前\n", *ocr_data, sep='\n')
+#     try:
+#         # tolerance = 1e-3
+#         for i in range(len(ocr_data)):
+#             new_info = copy.deepcopy(ocr_data[i]["key_info"])
+#             new_info = [[float(item) if item and item.replace('.', '', 1).isdigit() else item for item in sublist] for
+#                         sublist in new_info]
+#             for j in range(len(new_info)):
+#                 for k in range(len(new_info[j])):
+#
+#                         for l in range(len(new_info)):
+#                             for m in range(len(new_info[l])):
+#                                 try:
+#                                     if new_info[j][k] < new_info[l][m]:
+#                                         #动态容差
+#                                         tolerance = 10**(math.log10(new_info[j][k]) - 2)
+#                                         if abs(new_info[l][m] * 0.03937008 - new_info[j][k]) < tolerance:
+#                                             # print(new_info[l][m], new_info[j][k])
+#                                             new_info[j][k] = 'delete'
+#
+#
+#                                 except:
+#                                     pass
+#             # 删除new_info中的'delete'
+#             # print(new_info)
+#             new_info = [[item for item in sublist if item != 'delete'] for sublist in new_info]
+#             # print(new_info)
+#             # 浮点数转为字符串
+#             new_info = [[str(item) if isinstance(item, (int, float)) else item for item in sublist] for sublist in
+#                         new_info]
+#             # print(new_info)
+#             ocr_data[i]["key_info"] = new_info
+#     except Exception as e:
+#         print("删除英寸标注错误", e)
+#     print("clear_inch之后\n", *ocr_data, sep='\n')
+#     return ocr_data
 
 
 

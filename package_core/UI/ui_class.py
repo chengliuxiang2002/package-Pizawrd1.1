@@ -555,9 +555,9 @@ class RecoThread(QThread):
                 package_type = 'SON'
             manage_data = manage_json(self.current_package)
             package_process(self.current_page, manage_data[0])  # 分割流程
-            # if package_type == 'BGA':
-            #     # 如果表格类型是BGA,运行数字提取BGA引脚数量
-            #     pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color = extract_BGA_pins()
+            if package_type == 'BGA':
+                # 如果表格类型是BGA,运行数字提取BGA引脚数量
+                pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color = extract_BGA_pins()
             if package_type == 'QFP':
                 pin_num_x_serial, pin_num_y_serial = extract_QFP_pins()
             if package_type == 'QFN':
@@ -576,11 +576,11 @@ class RecoThread(QThread):
                 else:
                     print('数字提取')
                     self.result = package_indentify(package_type, self.current_page)
-                    # if package_type == 'BGA':
-                    #     self.result[2] = ['', '', pin_num_x_serial, ''] if pin_num_x_serial is not None else self.result[2]
-                    #     self.result[3] = ['', '', pin_num_y_serial, ''] if pin_num_y_serial is not None else self.result[3]
-                    #     self.result[10][2] = str(loss_color)
-                    #     self.result[10][1] = str(loss_pin)
+                    if package_type == 'BGA':
+                        self.result[2] = ['', '', pin_num_x_serial, ''] if pin_num_x_serial is not None else self.result[2]
+                        self.result[3] = ['', '', pin_num_y_serial, ''] if pin_num_y_serial is not None else self.result[3]
+                        self.result[10][2] = str(loss_color)
+                        self.result[10][1] = str(loss_pin)
             elif self.current_package['part_content'] is None and self.current_package['type'] == 'list':  # 说明是自动框表
                 #目前只考虑识别当前框选的表，暂不考虑识别多个框选的表
                 Table_Coordinate_List = [[],self.current_package['rect'],[]]
@@ -627,13 +627,13 @@ class RecoThread(QThread):
                     print(e)
                     # 走数字提取流程
                     self.result = package_indentify(package_type, self.current_page)
-                    # if package_type == 'BGA':
-                    #     self.result[2] = ['', '', pin_num_x_serial, ''] if pin_num_x_serial is not None else self.result[2]
-                    #     self.result[3] = ['', '', pin_num_y_serial, ''] if pin_num_y_serial is not None else self.result[3]
-                    #     self.result[10][2] = str(loss_color)
-                    #     self.result[10][1] = str(loss_pin)
-                    # elif package_type == 'SON':
-                    #     self.result[1] = ['', '', pin_sum, ''] if pin_sum is not None else self.result[1]
+                    if package_type == 'BGA':
+                        self.result[2] = ['', '', pin_num_x_serial, ''] if pin_num_x_serial is not None else self.result[2]
+                        self.result[3] = ['', '', pin_num_y_serial, ''] if pin_num_y_serial is not None else self.result[3]
+                        self.result[10][2] = str(loss_color)
+                        self.result[10][1] = str(loss_pin)
+                    elif package_type == 'SON':
+                        self.result[1] = ['', '', pin_sum, ''] if pin_sum is not None else self.result[1]
             self.signal_end.emit(1)
         except Exception as e:
             QMessageBox.critical(self.window, '识别出现错误', str(e))

@@ -355,22 +355,46 @@ class process_pred(object):
         label = self.decode(label)
         return text, label
 
+_GLOBAL_SESSIONS = {
+    'det': None,
+    'rec_small': None,
+    'rec_large': None
+}
+
+
+def get_global_session(model_path, session_key):
+    """获取或初始化全局 Session"""
+    global _GLOBAL_SESSIONS
+    if _GLOBAL_SESSIONS.get(session_key) is None:
+        print(f"Loading ONNX model from {model_path} ...")
+        # 显式指定 providers，优先使用 CUDA，否则 CPU
+        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        if 'CUDAExecutionProvider' not in onnxruntime.get_available_providers():
+            providers = ['CPUExecutionProvider']
+
+        _GLOBAL_SESSIONS[session_key] = onnxruntime.InferenceSession(model_path, providers=providers)
+    return _GLOBAL_SESSIONS[session_key]
 
 class det_rec_functions(object):
     def __init__(self, image, use_large=False):
-        """初始化检测与识别模型会话，并缓存输入图像。"""
+        """初始化检测与识别模型会话（使用全局缓存）。"""
         self.img = image.copy()
-        # 使用统一的路径管理加载模型
-        self.det_file = ocr_model_path('onnx_det', '0529det_model.onnx')
-        self.small_rec_file = ocr_model_path('onnx_rec', 'package_rec_model.onnx')
-        self.large_rec_file = ocr_model_path('onnx_rec', 'package_rec_model.onnx')
-        self.onet_det_session = onnxruntime.InferenceSession(self.det_file)
+
+        # 使用统一路径管理
+        det_file = ocr_model_path('onnx_det', '0529det_model.onnx')
+        small_rec_file = ocr_model_path('onnx_rec', 'package_rec_model.onnx')
+        large_rec_file = ocr_model_path('onnx_rec', 'package_rec_model.onnx') # 如有不同的大模型文件请修改此处
+
+        # --- 从全局缓存获取 Session，避免重复加载 ---
+        self.onet_det_session = get_global_session(det_file, 'det')
+
         if use_large:
-            self.onet_rec_session = onnxruntime.InferenceSession(self.large_rec_file)
+            self.onet_rec_session = get_global_session(large_rec_file, 'rec_large')
         else:
-            self.onet_rec_session = onnxruntime.InferenceSession(self.small_rec_file)
+            self.onet_rec_session = get_global_session(small_rec_file, 'rec_small')
+
         self.infer_before_process_op, self.det_re_process_op = self.get_process()
-        # 使用统一的路径管理加载字典文件
+        # 字典文件通常较小，且 process_pred 初始化开销不大，若有需要也可以缓存
         self.postprocess_op = process_pred(ocr_model_path('rec_dict.txt'), 'en', True)
 
     ## 图片预处理过程
@@ -447,7 +471,7 @@ class det_rec_functions(object):
     def get_process(self):
         """构建检测前处理列表与 DBNet 后处理器。"""
         det_db_thresh = 0.3
-        det_db_box_thresh = 0.5
+        det_db_box_thresh = 0.35
         max_candidates = 2000
         unclip_ratio = 1.6
         use_dilation = True
