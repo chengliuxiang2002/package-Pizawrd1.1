@@ -259,7 +259,7 @@ def remove_other_annotations(L3):
 
 def enrich_pairs_with_lines(L3, image_root: str, test_mode: int):
     """F4.6：为尺寸线补齐对应的标尺界限。"""
-    image_root = "D:\\cc\\PackageWizard1.1\\Result\\Package_extract\\data"
+    # image_root = "D:\\cc\\PackageWizard1.1\\Result\\Package_extract\\data"
     
     empty_data = np.empty((0, 13))
     for view in ("top", "bottom", "side", "detailed"):
