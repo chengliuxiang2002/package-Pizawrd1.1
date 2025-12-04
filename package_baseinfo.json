@@ -1,0 +1,50 @@
+[
+  {
+    "pdf": "2-DDR3_NLSAMSUNG_K4B1G0846E-HCH9.pdf",
+    "page_num": 6,
+    "content": "3.2 x8 Package Pinout (Top view) : 78ball FBGA Package",
+    "package_type": "BGA",
+    "pin": 78,
+    "length": 8.0,
+    "width": 3.2,
+    "height": null,
+    "horizontal_pin": null,
+    "vertical_pin": null
+  },
+  {
+    "pdf": "2-DDR3_NLSAMSUNG_K4B1G0846E-HCH9.pdf",
+    "page_num": 7,
+    "content": "3.3 x16 Package Pinout (Top view) : 96ball FBGA Package",
+    "package_type": "BGA",
+    "pin": 96,
+    "length": 16.0,
+    "width": 3.3,
+    "height": null,
+    "horizontal_pin": null,
+    "vertical_pin": null
+  },
+  {
+    "pdf": "2-DDR3_NLSAMSUNG_K4B1G0846E-HCH9.pdf",
+    "page_num": 8,
+    "content": "3.4 FBGA Package Dimension (x4/x8)",
+    "package_type": "BGA",
+    "pin": null,
+    "length": null,
+    "width": null,
+    "height": null,
+    "horizontal_pin": null,
+    "vertical_pin": null
+  },
+  {
+    "pdf": "2-DDR3_NLSAMSUNG_K4B1G0846E-HCH9.pdf",
+    "page_num": 9,
+    "content": "3.5 FBGA Package Dimension (x16)",
+    "package_type": "BGA",
+    "pin": null,
+    "length": null,
+    "width": null,
+    "height": null,
+    "horizontal_pin": null,
+    "vertical_pin": null
+  }
+]
