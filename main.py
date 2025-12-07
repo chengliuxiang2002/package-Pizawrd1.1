@@ -8,7 +8,7 @@ import threading
 import filetype  # 第三方库 filetype 1.2.0
 import fitz
 from PySide6.QtWidgets import QApplication, QMainWindow, \
-    QHBoxLayout, QFileDialog, QMessageBox, QTableWidgetItem,QLabel
+    QHBoxLayout, QFileDialog, QMessageBox, QTableWidgetItem, QLabel, QPushButton
 
 # 第三方库 PySide6 6.5.3
 from PySide6.QtPdf import QPdfDocument
@@ -24,6 +24,7 @@ from package_core.UI.ui_class import EnquirePopUp, Yes, No, MyGraphicsView, PuSh
     Label_initial_qss, PuShButton_img_Draw_qss, PuShButton_list_Draw_qss, \
     Label_Draw_Img_qss, Label_Draw_List_qss, DetectThread, MyProgressDialog, RecoThread
 from package_core.UI.Tools import create_dir, remove_dir, PDF_NAME, PDF_NAME_MINI
+from package_core.UI.AI.chat_dialog import show_chat_dialog
 
 #外部后续添加文件
 from package_core.Segment.Segment_function import get_type
@@ -228,6 +229,8 @@ class MyWindow(QMainWindow):
 
         self.setup()   # 界面参数初始化
 
+        self.setup_ai_button() #初始化AI按钮
+
     def cal_factor(self):
         """
         获取屏幕分辨率并计算伸缩比
@@ -366,6 +369,81 @@ class MyWindow(QMainWindow):
         self.current = 0        # 当前展示封装信息 索引
         self.show_page_number = 0  # 显示页重置
 
+    # [新增方法] 动态添加 AI 按钮
+    def setup_ai_button(self):
+        """在界面右下角添加一个 AI 助手悬浮按钮"""
+        try:
+            self.btn_ai_assist = QPushButton("🤖 元器件大师", self)
+            self.btn_ai_assist.resize(120, 40)
+            # 美化按钮样式
+            self.btn_ai_assist.setStyleSheet("""
+                QPushButton {
+                    background-color: #6200EA;
+                    color: white;
+                    border-radius: 20px;
+                    font-weight: bold;
+                    font-family: "Microsoft YaHei";
+                    font-size: 14px;
+                    border: 2px solid #B388FF;
+                }
+                QPushButton:hover {
+                    background-color: #7C4DFF;
+                }
+                QPushButton:pressed {
+                    background-color: #512DA8;
+                }
+            """)
+            self.btn_ai_assist.setCursor(Qt.PointingHandCursor)
+            self.btn_ai_assist.clicked.connect(self.open_ai_context_dialog)
+            self.btn_ai_assist.show()
+            self.update_ai_btn_position()  # 初始化位置
+        except Exception as e:
+            print(f"AI 按钮初始化失败: {e}")
+
+    # [新增方法] 更新按钮位置 (保持在右下角)
+    def update_ai_btn_position(self):
+        if hasattr(self, 'btn_ai_assist'):
+            # 这里的 150 和 80 是距离右边和底边的边距
+            x = self.width() - 150
+            y = self.height() - 80
+            self.btn_ai_assist.move(x, y)
+            self.btn_ai_assist.raise_()  # 保证按钮浮在最上层
+
+    # [新增方法] 打开 AI 对话框并传入上下文
+    def open_ai_context_dialog(self):
+        """收集当前选中的封装信息，传给 AI"""
+        context_info = "当前未选中任何具体元器件。"
+
+        # self.current 是当前索引(1-based)，self.package 是数据列表
+        if hasattr(self, 'package') and self.package and self.current > 0:
+            try:
+                # 获取当前数据对象
+                idx = self.current - 1
+                pkg_data = self.package[idx]
+
+                # 构建上下文描述字符串
+                info_parts = []
+                info_parts.append(f"封装类型: {pkg_data.get('package_type', '未知')}")
+                info_parts.append(f"所在页码: {pkg_data.get('page', 0) + 1}")
+
+                # 尝试解析识别出的参数 (reco_content)
+                reco = pkg_data.get('reco_content')
+                if reco:
+                    info_parts.append(f"识别到的参数数据: {str(reco)}")
+
+                # 如果有框选坐标
+                if 'rect' in pkg_data:
+                    info_parts.append(f"图纸坐标区域: {pkg_data['rect']}")
+
+                context_info = "\n".join(info_parts)
+                print(f"提取到上下文: {context_info}")  # 调试用
+
+            except Exception as e:
+                print(f"提取上下文出错: {e}")
+                context_info = f"数据提取异常: {str(e)}"
+
+        # 打开对话框
+        show_chat_dialog(self, context=context_info)
 
     def get_screen_width(self):
         """
@@ -1507,7 +1585,8 @@ class MyWindow(QMainWindow):
         if self.graphicsView.isVisible():
             self.graphicsView.layer.setSceneRect(0, 0, self.pdf_view_width, self.pdf_view_height)
 
-
+        # [新增] 确保 AI 按钮始终跟随窗口右下角
+        self.update_ai_btn_position()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

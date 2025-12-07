@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QSize
 from PySide6.QtGui import QFont, QColor, QTextCursor
 
-from package_core.UI.huaqiu.ai_agent import HuaQiuAIEngine
+from package_core.UI.AI.ai_agent import HuaQiuAIEngine
 
 
 class AIWorkerThread(QThread):
