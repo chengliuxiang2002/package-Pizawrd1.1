@@ -2304,6 +2304,22 @@ def cal_max_medium_min_bottom(ocr_data):
     '''
     根据key_info计算出max-medium_min
     '''
+    for i in range(len(ocr_data)):
+        # === [新增开始] ===
+        key_info_list = ocr_data[i]['key_info']
+        found_eq = False
+        for sublist in key_info_list:
+            if '=' in sublist:
+                try:
+                    eq_idx = sublist.index('=')
+                    if eq_idx + 1 < len(sublist):
+                        val = float(sublist[eq_idx + 1])
+                        ocr_data[i]['max_medium_min'] = np.array([val, val, val])
+                        found_eq = True
+                        break
+                except:
+                    pass
+        if found_eq: continue
 
     # 排查是否存在'Φ'
     # for i in range(len(ocr_data)):
@@ -3971,9 +3987,17 @@ def convert_Dic(dbnet_data, ocr_data):
     dbnet_data:np(, 4)[x1,y1,x2,y2]
     ocr_data:list['string','str']
     '''
+    # === [新增] 兼容性补丁：如果 ocr_data 已经是字典列表，说明是定向 OCR 的结果，直接返回 ===
+    if ocr_data and isinstance(ocr_data, list) and len(ocr_data) > 0 and isinstance(ocr_data[0], dict):
+        return ocr_data
+
+    # === [新增] 容错处理：如果 ocr_data 为空（且不是上面的字典情况），返回空列表，防止索引越界 ===
+    if not ocr_data or len(ocr_data) == 0:
+        return []
 
     new_ocr_data = []
-    for i in range(len(dbnet_data)):
+    min_len = min(len(dbnet_data), len(ocr_data))
+    for i in range(len(min_len)):
         dic = {'location': dbnet_data[i],
                'ocr_strings': ocr_data[i],
                'key_info': [],
