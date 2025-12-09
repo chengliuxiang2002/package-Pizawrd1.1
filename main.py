@@ -371,79 +371,84 @@ class MyWindow(QMainWindow):
 
     # [新增方法] 动态添加 AI 按钮
     def setup_ai_button(self):
-        """在界面右下角添加一个 AI 助手悬浮按钮"""
+        """在顶部工具栏添加 AI 助手按钮 (定位到指定按钮后面)"""
         try:
-            self.btn_ai_assist = QPushButton("🤖 元器件大师", self)
-            self.btn_ai_assist.resize(120, 40)
-            # 美化按钮样式
-            self.btn_ai_assist.setStyleSheet("""
-                QPushButton {
-                    background-color: #6200EA;
-                    color: white;
-                    border-radius: 20px;
-                    font-weight: bold;
-                    font-family: "Microsoft YaHei";
-                    font-size: 14px;
-                    border: 2px solid #B388FF;
-                }
-                QPushButton:hover {
-                    background-color: #7C4DFF;
-                }
-                QPushButton:pressed {
-                    background-color: #512DA8;
-                }
-            """)
-            self.btn_ai_assist.setCursor(Qt.PointingHandCursor)
-            self.btn_ai_assist.clicked.connect(self.open_ai_context_dialog)
-            self.btn_ai_assist.show()
-            self.update_ai_btn_position()  # 初始化位置
-        except Exception as e:
-            print(f"AI 按钮初始化失败: {e}")
+            # 1. 创建按钮
+            self.ui.pushButton_ai = QPushButton("🤖 元器件大师", self)
 
-    # [新增方法] 更新按钮位置 (保持在右下角)
-    def update_ai_btn_position(self):
-        if hasattr(self, 'btn_ai_assist'):
-            # 这里的 150 和 80 是距离右边和底边的边距
-            x = self.width() - 150
-            y = self.height() - 80
-            self.btn_ai_assist.move(x, y)
-            self.btn_ai_assist.raise_()  # 保证按钮浮在最上层
+            # 2. 设置样式
+            self.ui.pushButton_ai.setMinimumSize(110, 30)
+            self.ui.pushButton_ai.setCursor(Qt.PointingHandCursor)
+            self.ui.pushButton_ai.setStyleSheet("""
+                QPushButton {
+                    background-color: #673AB7; 
+                    color: white; 
+                    border: none;
+                    border-radius: 4px; 
+                    font-weight: bold;
+                    padding: 5px;
+                    margin-left: 5px;
+                }
+                QPushButton:hover { background-color: #5E35B1; }
+                QPushButton:pressed { background-color: #4527A0; }
+            """)
+
+            # 3. 连接点击事件
+            self.ui.pushButton_ai.clicked.connect(self.open_ai_context_dialog)
+
+            # 4. 【关键】定位插入
+            # 获取“锚点”按钮，这里以 'pushButton_reco' (参数识别) 为例
+            # 如果你想放在 'pushButton_detect' (自动搜索) 后面，就改为 self.ui.pushButton_detect
+            anchor_button = self.ui.pushButton_reco
+
+            if anchor_button:
+                # 获取按钮所在的父级布局
+                parent_widget = anchor_button.parentWidget()
+                target_layout = parent_widget.layout()
+
+                # 获取锚点按钮的当前索引
+                index = target_layout.indexOf(anchor_button)
+
+                # 在锚点按钮的下一个位置插入 AI 按钮
+                target_layout.insertWidget(index + 1, self.ui.pushButton_ai)
+                print(f"AI 按钮已插入到 {anchor_button.objectName()} 之后")
+            else:
+                # 如果找不到锚点，就默认加到顶部布局的最后
+                self.ui.horizontalLayout.addWidget(self.ui.pushButton_ai)
+
+        except Exception as e:
+            print(f"添加 AI 按钮失败: {e}")
 
     # [新增方法] 打开 AI 对话框并传入上下文
     def open_ai_context_dialog(self):
-        """收集当前选中的封装信息，传给 AI"""
+        """打开 AI 助手 (仅传递文本上下文，不截图，解决文件报错问题)"""
+        # 1. 提取文本上下文
         context_info = "当前未选中任何具体元器件。"
-
-        # self.current 是当前索引(1-based)，self.package 是数据列表
+        # 如果选中了列表项
         if hasattr(self, 'package') and self.package and self.current > 0:
             try:
-                # 获取当前数据对象
                 idx = self.current - 1
                 pkg_data = self.package[idx]
-
-                # 构建上下文描述字符串
                 info_parts = []
                 info_parts.append(f"封装类型: {pkg_data.get('package_type', '未知')}")
                 info_parts.append(f"所在页码: {pkg_data.get('page', 0) + 1}")
-
-                # 尝试解析识别出的参数 (reco_content)
                 reco = pkg_data.get('reco_content')
                 if reco:
                     info_parts.append(f"识别到的参数数据: {str(reco)}")
-
-                # 如果有框选坐标
                 if 'rect' in pkg_data:
                     info_parts.append(f"图纸坐标区域: {pkg_data['rect']}")
-
                 context_info = "\n".join(info_parts)
-                print(f"提取到上下文: {context_info}")  # 调试用
-
             except Exception as e:
                 print(f"提取上下文出错: {e}")
                 context_info = f"数据提取异常: {str(e)}"
 
-        # 打开对话框
-        show_chat_dialog(self, context=context_info)
+        # 2. 打开对话框
+        # 【关键修改】image_path 直接传 None。
+        # 这样 main.py 不会去写文件，彻底根除 'Permission denied' 或图片加载错误。
+        try:
+            show_chat_dialog(self, context=context_info, image_path=None)
+        except Exception as e:
+            print(f"打开对话框失败: {e}")
 
     def get_screen_width(self):
         """
@@ -1584,9 +1589,6 @@ class MyWindow(QMainWindow):
         # 更新场景大小
         if self.graphicsView.isVisible():
             self.graphicsView.layer.setSceneRect(0, 0, self.pdf_view_width, self.pdf_view_height)
-
-        # [新增] 确保 AI 按钮始终跟随窗口右下角
-        self.update_ai_btn_position()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

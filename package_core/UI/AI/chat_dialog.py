@@ -1,268 +1,175 @@
-"""
-AI 对话框组件
-提供与 AI 助手交互的图形界面
-"""
+# package_core/UI/AI/chat_dialog.py
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTextEdit,
-    QLineEdit, QPushButton, QLabel, QSizePolicy,
-    QScrollArea, QWidget, QFrame
+    QLineEdit, QPushButton, QFrame
 )
-from PySide6.QtCore import Qt, Signal, QThread, QSize
-from PySide6.QtGui import QFont, QColor, QTextCursor
-
+from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtGui import QFont, QTextCursor
 from package_core.UI.AI.ai_agent import HuaQiuAIEngine
 
 
 class AIWorkerThread(QThread):
-    """AI 调用工作线程，避免阻塞 UI"""
-    response_ready = Signal(str)
-    error_occurred = Signal(str)
+    """AI 调用工作线程"""
+    stream_received = Signal(str)  # 流式片段
+    response_ready = Signal(str)  # 完整响应
+    error_occurred = Signal(str)  # 错误信号
 
-    def __init__(self, engine, question, context=""):
+    def __init__(self, engine, question, context="", image_path=None):
         super().__init__()
         self.engine = engine
         self.question = question
         self.context = context
+        self.image_path = image_path
 
     def run(self):
         try:
-            response = self.engine.chat(self.question, self.context)
-            self.response_ready.emit(response)
+            full_response = ""
+            # 调用 backend 的 chat 函数 (流式)
+            for chunk_text in self.engine.chat(self.question, self.context, self.image_path, stream=True):
+                if chunk_text:
+                    full_response += chunk_text
+                    self.stream_received.emit(chunk_text)
+
+            self.response_ready.emit(full_response)
         except Exception as e:
+            # 捕获所有线程内的错误发送给主线程
             self.error_occurred.emit(str(e))
 
 
 class ChatDialog(QDialog):
     """AI 对话框"""
 
-    def __init__(self, parent=None, context=""):
+    def __init__(self, parent=None, context="", image_path=None):
         super().__init__(parent)
-        self.context = context  # 可选的上下文信息
+        self.context = context
+        self.image_path = image_path
         self.ai_engine = HuaQiuAIEngine()
         self.worker_thread = None
-
+        self.current_ai_message_cursor = None
         self.setup_ui()
-        self.setup_connections()
 
     def setup_ui(self):
-        """设置 UI"""
         self.setWindowTitle("AI 助手")
-        self.setMinimumSize(500, 400)
         self.resize(600, 500)
-
-        # 主布局
         main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 10)
 
-        # 标题
-        title_label = QLabel("AI 电子工程师助手")
-        title_label.setFont(QFont("Microsoft YaHei", 14, QFont.Bold))
-        title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("color: #333; padding: 5px;")
-        main_layout.addWidget(title_label)
-
-        # 聊天记录区域
+        # 1. 聊天记录显示区 (优化样式)
         self.chat_display = QTextEdit()
         self.chat_display.setReadOnly(True)
         self.chat_display.setFont(QFont("Microsoft YaHei", 10))
         self.chat_display.setStyleSheet("""
             QTextEdit {
-                background-color: #f5f5f5;
                 border: 1px solid #ddd;
                 border-radius: 5px;
                 padding: 10px;
+                background-color: #f9f9f9;
             }
         """)
-        self.chat_display.setPlaceholderText("对话内容将显示在这里...")
-        main_layout.addWidget(self.chat_display, 1)
+        main_layout.addWidget(self.chat_display)
 
-        # 输入区域
+        # 2. 输入区
         input_frame = QFrame()
-        input_frame.setStyleSheet("""
-            QFrame {
-                background-color: #fff;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-            }
-        """)
         input_layout = QHBoxLayout(input_frame)
-        input_layout.setContentsMargins(5, 5, 5, 5)
-        input_layout.setSpacing(5)
+        input_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 输入框
         self.input_edit = QLineEdit()
-        self.input_edit.setFont(QFont("Microsoft YaHei", 11))
-        self.input_edit.setPlaceholderText("输入你的问题...")
-        self.input_edit.setStyleSheet("""
-            QLineEdit {
-                border: none;
-                padding: 8px;
-                background: transparent;
-            }
-        """)
-        input_layout.addWidget(self.input_edit, 1)
+        self.input_edit.setPlaceholderText("请输入您的问题...")
+        self.input_edit.setStyleSheet("QLineEdit { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }")
+        self.input_edit.returnPressed.connect(self.send_message)
+        input_layout.addWidget(self.input_edit)
 
-        # 发送按钮
         self.send_button = QPushButton("发送")
-        self.send_button.setFont(QFont("Microsoft YaHei", 10))
-        self.send_button.setFixedSize(70, 35)
         self.send_button.setCursor(Qt.PointingHandCursor)
         self.send_button.setStyleSheet("""
             QPushButton {
-                background-color: #4CAF50;
+                background-color: #0078d7;
                 color: white;
                 border: none;
-                border-radius: 5px;
-                font-weight: bold;
+                padding: 8px 15px;
+                border-radius: 4px;
             }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
+            QPushButton:hover { background-color: #0063b1; }
         """)
+        self.send_button.clicked.connect(self.send_message)
         input_layout.addWidget(self.send_button)
 
         main_layout.addWidget(input_frame)
 
-        # 状态标签
-        self.status_label = QLabel("")
-        self.status_label.setFont(QFont("Microsoft YaHei", 9))
-        self.status_label.setStyleSheet("color: #666; padding: 2px;")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(self.status_label)
-
-        # 底部按钮
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-
-        # 清空按钮
-        self.clear_button = QPushButton("清空对话")
-        self.clear_button.setFont(QFont("Microsoft YaHei", 9))
-        self.clear_button.setStyleSheet("""
-            QPushButton {
-                background-color: #f0f0f0;
-                border: 1px solid #ddd;
-                border-radius: 3px;
-                padding: 5px 15px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-        """)
-        button_layout.addWidget(self.clear_button)
-
-        # 关闭按钮
-        self.close_button = QPushButton("关闭")
-        self.close_button.setFont(QFont("Microsoft YaHei", 9))
-        self.close_button.setStyleSheet("""
-            QPushButton {
-                background-color: #f0f0f0;
-                border: 1px solid #ddd;
-                border-radius: 3px;
-                padding: 5px 15px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-        """)
-        button_layout.addWidget(self.close_button)
-
-        main_layout.addLayout(button_layout)
-
-    def setup_connections(self):
-        """设置信号连接"""
-        self.send_button.clicked.connect(self.send_message)
-        self.input_edit.returnPressed.connect(self.send_message)
-        self.clear_button.clicked.connect(self.clear_chat)
-        self.close_button.clicked.connect(self.close)
-
     def send_message(self):
-        """发送消息"""
         question = self.input_edit.text().strip()
-        if not question:
-            return
+        if not question: return
 
         # 显示用户消息
-        self.append_message("你", question, "#2196F3")
+        self.append_message("你", question, "#0078d7", is_user=True)
         self.input_edit.clear()
+        self.input_edit.setEnabled(False)
+        self.send_button.setEnabled(False)
 
-        # 禁用输入
-        self.set_input_enabled(False)
-        self.status_label.setText("AI 正在思考...")
+        # 准备 AI 回复容器
+        self.start_ai_message()
 
-        # 启动工作线程
-        self.worker_thread = AIWorkerThread(self.ai_engine, question, self.context)
-        self.worker_thread.response_ready.connect(self.on_response_ready)
-        self.worker_thread.error_occurred.connect(self.on_error_occurred)
-        self.worker_thread.finished.connect(self.on_thread_finished)
+        # 启动线程 (注意：image_path 这里可能为 None，在 main.py 里控制)
+        self.worker_thread = AIWorkerThread(self.ai_engine, question, self.context, self.image_path)
+        self.worker_thread.stream_received.connect(self.update_ai_message)
+        self.worker_thread.error_occurred.connect(self.on_error)
+        self.worker_thread.finished.connect(self.on_finished)
         self.worker_thread.start()
 
-    def on_response_ready(self, response):
-        """AI 响应就绪"""
-        self.append_message("AI 助手", response, "#4CAF50")
+    def start_ai_message(self):
+        """初始化 AI 消息块"""
+        self.append_header("AI 助手", "#28a745")
+        self.current_ai_message_cursor = self.chat_display.textCursor()
+        self.current_ai_message_cursor.movePosition(QTextCursor.End)
+        # 插入临时占位符
+        self.chat_display.insertHtml('<div style="color: gray;">...</div>')
+        self.chat_display.ensureCursorVisible()
 
-    def on_error_occurred(self, error):
-        """发生错误"""
-        self.append_message("系统", f"发生错误: {error}", "#f44336")
+    def update_ai_message(self, text):
+        """流式追加内容"""
+        if self.current_ai_message_cursor:
+            cursor = self.chat_display.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            # 处理换行，防止 HTML 格式错乱
+            formatted = text.replace('\n', '<br>')
+            cursor.insertHtml(f'<span>{formatted}</span>')
+            self.chat_display.setTextCursor(cursor)
+            self.chat_display.ensureCursorVisible()
 
-    def on_thread_finished(self):
-        """线程结束"""
-        self.set_input_enabled(True)
-        self.status_label.setText("")
-        self.worker_thread = None
+    def on_error(self, err):
+        # 【修改】报错时只在后台打印，不显示在界面上
+        print(f"--- [后台错误] AI线程报错: {err} ---")
+        # 如果需要，可以在这里让界面恢复输入状态，但不弹窗
+        self.on_finished()
 
-    def set_input_enabled(self, enabled):
-        """设置输入控件状态"""
-        self.input_edit.setEnabled(enabled)
-        self.send_button.setEnabled(enabled)
+    def on_finished(self):
+        self.input_edit.setEnabled(True)
+        self.send_button.setEnabled(True)
+        self.input_edit.setFocus()
+        self.current_ai_message_cursor = None
+        self.chat_display.append("")  # 增加空行间距
 
-    def append_message(self, sender, message, color):
-        """添加消息到聊天记录"""
+    def append_header(self, sender, color):
         cursor = self.chat_display.textCursor()
         cursor.movePosition(QTextCursor.End)
+        cursor.insertHtml(f'<div style="margin-top: 15px; font-weight: bold; color: {color};">{sender}:</div>')
+        self.chat_display.setTextCursor(cursor)
 
-        # 发送者
-        cursor.insertHtml(f'<p style="margin: 5px 0;"><b style="color: {color};">{sender}:</b></p>')
+    def append_message(self, sender, message, color, is_user=False):
+        self.append_header(sender, color)
+        cursor = self.chat_display.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        msg_html = message.replace('\n', '<br>')
 
-        # 消息内容
-        # 处理换行和空格
-        formatted_message = message.replace('\n', '<br>').replace('  ', '&nbsp;&nbsp;')
-        cursor.insertHtml(f'<p style="margin: 5px 0 15px 10px; color: #333;">{formatted_message}</p>')
+        # 【修改】去除 <hr>，优化背景色
+        bg_style = "background-color: #e6f7ff; padding: 8px; border-radius: 5px;" if is_user else "padding: 5px;"
+        cursor.insertHtml(f'<div style="margin-top:5px; {bg_style}">{msg_html}</div>')
 
-        # 分隔线
-        cursor.insertHtml('<hr style="border: none; border-top: 1px solid #eee; margin: 10px 0;">')
-
-        # 滚动到底部
         self.chat_display.setTextCursor(cursor)
         self.chat_display.ensureCursorVisible()
 
-    def clear_chat(self):
-        """清空聊天记录"""
-        self.chat_display.clear()
 
-    def set_context(self, context):
-        """设置上下文信息"""
-        self.context = context
-
-
-def show_chat_dialog(parent=None, context=""):
-    """显示 AI 对话框的便捷函数"""
-    dialog = ChatDialog(parent, context)
+# 便捷入口
+def show_chat_dialog(parent=None, context="", image_path=None):
+    dialog = ChatDialog(parent, context, image_path)
     dialog.exec()
-    return dialog
-
-
-if __name__ == "__main__":
-    import sys
-    from PySide6.QtWidgets import QApplication
-
-    app = QApplication(sys.argv)
-    dialog = ChatDialog()
-    dialog.show()
-    sys.exit(app.exec())
