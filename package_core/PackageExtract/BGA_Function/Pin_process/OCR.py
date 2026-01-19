@@ -454,13 +454,24 @@ class det_rec_functions(object):
     def resize_norm_img(self, img, max_wh_ratio):
         imgC, imgH, imgW = [int(v) for v in "3, 48, 100".split(",")]
         assert imgC == img.shape[2]
+
+        # 确保 max_wh_ratio 有效
+        max_wh_ratio = max(max_wh_ratio, 0.05)
+
         imgW = int((32 * max_wh_ratio))
+
         h, w = img.shape[:2]
         ratio = w / float(h)
         if math.ceil(imgH * ratio) > imgW:
             resized_w = imgW
         else:
             resized_w = int(math.ceil(imgH * ratio))
+
+        # --- 【修复代码开始】 ---
+        # 强制 resized_w 至少为 1，否则 cv2.resize 会报错或生成空数组
+        if resized_w <= 0:
+            resized_w = 1
+        # --- 【修复代码结束】 ---
         resized_image = cv2.resize(img, (resized_w, imgH))
         resized_image = resized_image.astype('float32')
         resized_image = resized_image.transpose((2, 0, 1)) / 255
@@ -545,6 +556,13 @@ class det_rec_functions(object):
             max(
                 np.linalg.norm(points[0] - points[3]),
                 np.linalg.norm(points[1] - points[2])))
+
+        # --- 【修复代码开始】 ---
+        # 强制最小宽高为1，防止 resize 或 warp 报错
+        img_crop_width = max(img_crop_width, 1)
+        img_crop_height = max(img_crop_height, 1)
+        # --- 【修复代码结束】 ---
+
         pts_std = np.float32([[0, 0], [img_crop_width, 0],
                               [img_crop_width, img_crop_height],
                               [0, img_crop_height]])
@@ -585,6 +603,21 @@ class det_rec_functions(object):
         for box in dt_boxes:
             tmp_box = copy.deepcopy(box)
             img_crop = self.get_rotate_crop_image(img, tmp_box)
+
+            # --- 【修复代码开始】 ---
+            # 检查裁剪出来的图片是否有效
+            if img_crop is None or img_crop.shape[0] < 1 or img_crop.shape[1] < 1:
+                # 如果图片高度或宽度为0，跳过不处理，补一个空图占位或直接忽略
+                # 这里为了保持索引对齐，建议放入一个极小的纯白图片，或者直接 continue (取决于你的业务逻辑)
+                # 方案A：直接跳过（推荐，能过滤噪点）
+                continue
+
+                # 进一步过滤：如果长宽比极度畸变（例如一条细线），也容易导致模型报错
+            h, w = img_crop.shape[:2]
+            if w == 0 or h == 0:
+                continue
+            # --- 【修复代码结束】 ---
+
             if Is_crop:
                 crop_dir = f'dataset_crop/{name}'
                 if not os.path.exists(crop_dir):
@@ -598,7 +631,18 @@ class det_rec_functions(object):
         results = []
         results_info = []
         for pic in img_list:
-            res = self.get_img_res(self.onet_rec_session, pic, self.postprocess_op)
+            # --- 【修复代码开始】 ---
+            # 再次保险：防止处理过程中出现空对象
+            if pic is None or pic.size == 0:
+                continue
+
+            try:
+                res = self.get_img_res(self.onet_rec_session, pic, self.postprocess_op)
+            except Exception as e:
+                # print(f"识别单张小图失败，跳过。错误信息: {e}, 图片尺寸: {pic.shape}")
+                continue
+            # --- 【修复代码结束】 ---
+
             res[0] = list(res[0])
 
             # 上划线处理（原逻辑保留）
@@ -643,132 +687,9 @@ class det_rec_functions(object):
             results_info.append(res)
         return results, results_info
 
-    # 核心改动：指定区域先过检测模型再识别
-    def recognize_specific_regions(self, regions, name="custom_region", Is_crop=False, show_sub_det=True):
-        """
-        对指定区域执行「检测→坐标转换→识别」流程
-        :param regions: 区域列表，每个元素为 [x1, y1, x2, y2]（左上角→右下角，BGR坐标系）
-        :param show_sub_det: 是否保存子区域的检测结果图
-        :return: 结构化结果，包含原区域、检测文本框（texts列表和boxes列表）
-        """
-        img_ori = self.img
-        if img_ori is None:
-            raise ValueError("输入图像为空，无法执行识别")
-
-        results = []
-        img_h, img_w = img_ori.shape[:2]
-
-        for region_idx, region in enumerate(regions):
-            # 1. 区域预处理（边界修正+有效性检查）
-            x1, y1, x2, y2 = map(int, region)
-            # 修正区域到原图范围内
-            x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(img_w, x2), min(img_h, y2)
-            # 跳过无效区域
-            if x1 >= x2 or y1 >= y2:
-                print(f"警告：区域 {region_idx + 1} 无效（x1>=x2 或 y1>=y2），跳过")
-                results.append({
-                    'source_region_idx': region_idx + 1,
-                    'source_region': [x1, y1, x2, y2],
-                    'text_boxes': {
-                        'texts': [],
-                        'boxes': []
-                    }
-                })
-                continue
-
-            # 2. 裁剪指定区域的子图像
-            sub_img = img_ori[y1:y2, x1:x2].copy()
-            if sub_img.size == 0:
-                print(f"警告：区域 {region_idx + 1} 裁剪后图像为空，跳过")
-                results.append({
-                    'source_region_idx': region_idx + 1,
-                    'source_region': [x1, y1, x2, y2],
-                    'text_boxes_count': 0,
-                    'text_boxes': {
-                        'texts': [],
-                        'boxes': []
-                    }
-                })
-                continue
-
-            # 3. 对子图像跑检测模型，得到子区域内的文本框
-            sub_det_name = f"{name}_region_{region_idx + 1}"
-            sub_dt_boxes = self.get_boxes(
-                name=sub_det_name,
-                show=show_sub_det,
-                image1=sub_img,  # 用于绘制的图像
-                input_img=sub_img  # 实际检测的图像
-            )
-            if not sub_dt_boxes:
-                print(f"区域 {region_idx + 1} 未检测到文本框")
-                results.append({
-                    'source_region_idx': region_idx + 1,
-                    'source_region': [x1, y1, x2, y2],
-                    'text_boxes_count': 0,
-                    'text_boxes': {
-                        'texts': [],
-                        'boxes': []
-                    }
-                })
-                continue
-
-            # 4. 将子图像文本框坐标转换为原图坐标（偏移修正）
-            orig_dt_boxes = []
-            for sub_box in sub_dt_boxes:
-                orig_box = sub_box.copy()
-                orig_box[:, 0] += x1  # x轴偏移：子图x + 原区域左边界
-                orig_box[:, 1] += y1  # y轴偏移：子图y + 原区域上边界
-                orig_dt_boxes.append(orig_box)
-
-            # 5. 对转换后的文本框执行识别
-            sub_results, sub_results_info = self.recognition_img(
-                dt_boxes=orig_dt_boxes,
-                name=sub_det_name,
-                Is_crop=Is_crop
-            )
-
-            # 6. 整理结构化结果（文本和坐标分别存入列表）
-            all_texts = []  # 存储所有文本
-            all_boxes = []  # 存储所有坐标
-            for box, result in zip(orig_dt_boxes, sub_results):
-                text, _ = result  # 忽略置信度
-                all_texts.append(text)
-                all_boxes.append(box.tolist())  # 四边形坐标（原图）
-
-            # 7. 加入总结果
-            results.append({
-                'source_region_idx': region_idx + 1,
-                'source_region': [x1, y1, x2, y2],
-                'text_boxes_count': len(all_texts),
-                'text_boxes': {
-                    'texts': all_texts,
-                    'boxes': all_boxes
-                }
-            })
-
-        return results
 
 
-# 外部调用接口（适配新的指定区域检测逻辑）
-def recognize_regions(image, regions, name="custom_region", Is_crop=False, show_sub_det=True):
-    """
-    外部调用入口：对指定图像的特定区域执行「检测→识别」
-    :param image: 输入图像（BGR格式numpy数组）
-    :param regions: 区域列表 [[x1,y1,x2,y2], ...]
-    :param show_sub_det: 是否保存子区域检测结果图
-    :return: 结构化识别结果
-    """
-    if image is None or len(image.shape) != 3 or image.shape[2] != 3:
-        raise ValueError("输入图像必须是3通道BGR格式numpy数组")
 
-    ocr_sys = det_rec_functions(image)
-    return ocr_sys.recognize_specific_regions(
-        regions=regions,
-        name=name,
-        Is_crop=Is_crop,
-        show_sub_det=show_sub_det
-    )
 
 
 def list_to_tuple(data):
@@ -815,6 +736,9 @@ def resize_image(image):
 
 def Run_onnx(image_path, name):
     image = cv2.imread(image_path)
+    if image is None or image.size == 0:
+        print(f"错误：无法读取图像 {image_path}，图像为空或路径无效")
+        return [], []  # 返回空结果，终止流程
     write = ONNX_Use(image, name)
     texts = [item['transcription'] for item in write]
     boxes = [[list(point) for point in item['points']] for item in write]
@@ -829,40 +753,11 @@ def Run_onnx1(image, name):
 
 
 
-def regions_to_ocr(image_path, regions):
-    image = cv2.imread(image_path)
-    print("开始OCR指定区域...")
-    results = recognize_regions(image=image, regions=regions)
-    # 将results保存为JSON文件
-    try:
-        # 打开文件并写入数据，ensure_ascii=False确保中文正常显示
-        with open("ocr_results.json", "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=4)
-        print("数据已成功保存为ocr_results.json")
-    except Exception as e:
-        print(f"保存文件时出错：{e}")
-
-    return results
-
 if __name__ == '__main__':
     # 1. 加载图像
-    image_path = 'imgs/test3/side.jpg'  # 替换为你的图像路径
+    image_path = r'D:\workspace\PackageWizard1.1\Result\Package_view\page\bottom.jpg'  # 替换为你的图像路径
     # image_path = 'imgs/test3/1.png'  # 替换为你的图像路径
     t1=time.time()
-    # 2. 定义要检测的指定区域（格式：[x1, y1, x2, y2]，需根据实际图像调整）
-    # regions = [
-    #     [828, 335, 1348, 736],  # 区域1
-    #     [612, 678, 705, 700],  # 区域2
-    #     [979, 676, 1125, 705],  # 区域3
-    #     [585, 951, 1200, 1066],  # 区域4
-    # ]
-    # regions = [
-    #     [248, 533, 860, 1161],  # 区域1
-    #     [229, 304, 1565, 419],  # 区域2
-    #     [190, 2090, 1600, 2150],  # 区域3
-    #
-    # ]
-    # res = regions_to_ocr(image_path, regions)
     res = Run_onnx(image_path,'t')
 
     print(res)

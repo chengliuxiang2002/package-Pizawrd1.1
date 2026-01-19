@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from package_core.PackageExtract.BGA_Function.Pin_process.predict import process_single_image, \
-    extract_pin_coords
+    extract_pin_coords, extract_border_coords
 
 try:
     from package_core.PackageExtract.yolox_onnx_py.model_paths import model_path
@@ -179,6 +179,27 @@ def visualize_bga_rows(image_path, bga_rows):
     plt.tight_layout()
     plt.show()
 
+def filter_valid_pins(pin_coords, border_coords):
+    """
+    筛选有效PIN（仅保留Border内部的PIN，外部为无效）
+    核心特征：引脚位于元件本体（Border框内），外部无有效引脚
+    :param pin_coords: 所有PIN坐标列表 [[x1,y1,x2,y2], ...]
+    :param border_coords: Border坐标 [left, top, right, bottom]
+    :return: 有效PIN坐标列表
+    """
+    left, top, right, bottom = border_coords
+    valid_pins = []
+
+    for pin in pin_coords:
+        x1, y1, x2, y2 = pin
+        center_x = (x1 + x2) / 2
+        center_y = (y1 + y2) / 2
+
+        # 有效PIN判定：中心点在Border内部（包含边界）
+        if left <= center_x <= right and top <= center_y <= bottom:
+            valid_pins.append(pin)
+    return valid_pins
+
 
 def detr_pin_XY(image_path):
     # 使用统一的路径管理加载模型
@@ -187,7 +208,7 @@ def detr_pin_XY(image_path):
     # 基础配置参数（不变）
     std_h, std_w = 640, 640  # 标准输入尺寸
     conf_thres = 0.6  # 置信度阈值
-    iou_thres = 0.5  # IOU阈值
+    iou_thres = 0.3  # IOU阈值
     class_config = ['BGA_Border', 'BGA_PIN', 'BGA_serial_letter', 'BGA_serial_number']  # 类别配置
 
     # 加载ONNX模型（不变）
@@ -209,7 +230,9 @@ def detr_pin_XY(image_path):
         show_image=False
     )
     old_pin_boxes = extract_pin_coords(res)
-
+    border = extract_border_coords(res)
+    if border:
+        old_pin_boxes = filter_valid_pins(old_pin_boxes, border)
     pin_boxes = remove_overlapping_pins(old_pin_boxes)
     X = None
     Y = None
@@ -232,7 +255,7 @@ def detr_pin_XY(image_path):
 # ==============================================================================
 if __name__ == "__main__":
     # 单张图片处理（用于测试）
-    image_path = r"D:\workspace\PackageWizard1.1\Result\Package_extract\data\bottom.jpg"
+    image_path = r"D:\workspace\PackageWizard1.1\Result\Package_view\page\bottom.jpg"
 
     X, Y = detr_pin_XY(image_path=image_path)
     print(X,Y)

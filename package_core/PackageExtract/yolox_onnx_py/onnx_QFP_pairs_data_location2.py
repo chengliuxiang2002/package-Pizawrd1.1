@@ -3,7 +3,12 @@
 封装 pairs、引脚、外框等检测模型的推理与后处理逻辑，
 为 F4.6-F4.9 流程提供必要的几何输入。
 """
-
+from ultralytics import YOLO
+import os
+import time
+import glob
+import sys
+import os
 import argparse
 import os
 from pathlib import Path
@@ -13,6 +18,7 @@ import onnxruntime
 
 from package_core.PackageExtract.yolox_onnx_py.yolox_onnx_shared import demo_postprocess,mkdir,multiclass_nms,preprocess,vis
 from package_core.PackageExtract.yolox_onnx_py.model_paths import yolo_model_path, result_path
+from package_core.PackageExtract.yolox_onnx_py.model_cache import get_yolo_model, get_onnx_session
 
 from math import sqrt
 
@@ -167,104 +173,151 @@ def find_the_only_body(img_path):
 
 
 def onnx_inference(img_path, package_classes, weight):
-    """根据封装类型执行 YOLOX 推理并返回分类后的检测结果。"""
     # VOC_CLASSES = ('Border', 'Pad', 'Pin', 'angle', 'multi_value_1', 'multi_value_2', 'multi_value_3', 'multi_value_4',
     #                'multi_value_angle', 'multi_value_thickness', 'multi_value_triangle', 'other', 'pairs_inSide_col',
     #                'pairs_inSide_row', 'pairs_inSide_thickness', 'pairs_outSide_col', 'pairs_outSide_row', 'plane',
     #                'serial_number')
     if package_classes == 'BGA':
-        VOC_CLASSES = ('multi_value_1',
-                       'multi_value_2',
-                       'multi_value_3',
-                       'multi_value_triangle',
-                       'pairs_inside_col',
-                       'pairs_inside_row',
-                       'pairs_outside_col',
-                       'pairs_outside_row',
-                       'other',
-                       'BGA_serial_number',
-                       'BGA_serial_letter',
-                       'BGA_Border',
-                       'BGA_PIN',)
+        VOC_CLASSES = ( "main",
+                        "pairs_outside_row",
+                        "pairs_outside_col",
+                        "pairs_inside_row",
+                        "pairs_inside_col",
+                        "multi_value_1",
+                        "BGA_serial_number",
+                        "BGA_serial_letter",
+                        "BGA_PIN",
+                        "BGA_Border",
+                        "other",
+                        "multi_value_triangle",
+                        "multi_value_2",
+                        "multi_value_3",
+                        "side_body",
+                        "standoff",
+                        "QFP_Border",
+                        "QFP_Pin",
+                        "serial_number",
+                        "QFP_Pad",
+                        "plane",
+                        "qfn_multi_value",
+                        "qfn_border",
+                        "qfn_pad",
+                        "angle",
+                        "qfn_pairs_arrow",
+                        "qfn_pairs_inside_oblique",
+                        "multi_value_angle",
+                        "multi_value_thickness",
+                        "pairs_inSide_thickness",
+                        "multi_value_4",
+                        "SOP_Pin",
+                        "SOP_Border")
     else:
-        VOC_CLASSES = ('multi_value_1',
-                       'multi_value_2',
-                       'multi_value_3',
-                       'multi_value_4',
-                       'multi_value_angle',
-                       'multi_value_triangle',
-                       'angle',
-                       'pairs_inside_col',
-                       'pairs_inside_row',
-                       'pairs_outside_col',
-                       'pairs_outside_row',
-                       'other',
-                       'serial_number',
-                       'QFN_Border',
-                       'QFN_multi_value',
-                       'QFN_pad',
-                       'QFN_pairs_arrow',
-                       'QFN_pairs_inside_oblique',
-                       'QFP_Border',
-                       'QFP_Pad',
-                       'QFP_Pin',
-                       'SOP_Border',
-                       'SOP_Pin',
-                       'multi_value_thickness',
-                       'plane',
-                       'pairs_inSide_thickness',
-                       'BGA_serial_number',
-                       'BGA_serial_letter',
-                       'BGA_Border',)
+        VOC_CLASSES = ( "main",
+                        "pairs_outside_row",
+                        "pairs_outside_col",
+                        "pairs_inside_row",
+                        "pairs_inside_col",
+                        "multi_value_1",
+                        "BGA_serial_number",
+                        "BGA_serial_letter",
+                        "BGA_PIN",
+                        "BGA_Border",
+                        "other",
+                        "multi_value_triangle",
+                        "multi_value_2",
+                        "multi_value_3",
+                        "side_body",
+                        "standoff",
+                        "QFP_Border",
+                        "QFP_Pin",
+                        "serial_number",
+                        "QFP_Pad",
+                        "plane",
+                        "qfn_multi_value",
+                        "qfn_border",
+                        "qfn_pad",
+                        "angle",
+                        "qfn_pairs_arrow",
+                        "qfn_pairs_inside_oblique",
+                        "multi_value_angle",
+                        "multi_value_thickness",
+                        "pairs_inSide_thickness",
+                        "multi_value_4",
+                        "SOP_Pin",
+                        "SOP_Border")
 
-    args = make_parser(img_path, weight).parse_args()
+    model = get_yolo_model(weight)  # 使用缓存的模型
+    # 进行推理
+    
+    results = model.predict(
+        source=img_path,
+        conf=0.1,
+        save=True,
+    )
+    # 读取图片
+    img_ori = cv2.imread(img_path)
 
-    input_shape = tuple(map(int, args.input_shape.split(',')))
-    origin_img = cv2.imread(args.image_path)
-    img, ratio = preprocess(origin_img, input_shape)
-
-    session = onnxruntime.InferenceSession(args.model)
-
-    ort_inputs = {session.get_inputs()[0].name: img[None, :, :, :]}
-    output = session.run(None, ort_inputs)
-    predictions = demo_postprocess(output[0], input_shape)[0]
-
-    boxes = predictions[:, :4]
-    scores = predictions[:, 4:5] * predictions[:, 5:]
-
-    boxes_xyxy = np.ones_like(boxes)
-    boxes_xyxy[:, 0] = boxes[:, 0] - boxes[:, 2] / 2.
-    boxes_xyxy[:, 1] = boxes[:, 1] - boxes[:, 3] / 2.
-    boxes_xyxy[:, 2] = boxes[:, 0] + boxes[:, 2] / 2.
-    boxes_xyxy[:, 3] = boxes[:, 1] + boxes[:, 3] / 2.
-    boxes_xyxy /= ratio
-    dets = multiclass_nms(boxes_xyxy, scores, nms_thr=0.45, score_thr=0.1)
-
-    if dets is not None:
-        final_boxes, final_scores, final_cls_inds = dets[:, :4], dets[:, 4], dets[:, 5]
-        origin_img = vis(origin_img, final_boxes, final_scores, final_cls_inds,
-                         conf=args.score_thr, class_names=VOC_CLASSES)
+    # 正确提取检测结果
+    if results and len(results) > 0:
+        # 获取第一个结果（因为只处理单张图片）
+        result = results[0]
+        
+        # 检查是否有检测到的目标
+        if result.boxes is not None and len(result.boxes) > 0:
+            # 提取边界框 (xyxy格式)
+            boxes = result.boxes.xyxy.cpu().numpy()
+            # 提取置信度
+            scores = result.boxes.conf.cpu().numpy()
+            # 提取类别索引
+            cls_inds = result.boxes.cls.cpu().numpy().astype(int)
+            
+            final_boxes = boxes
+            final_scores = scores
+            final_cls_inds = cls_inds
+            
+            # 可视化结果
+            origin_img = vis(img_ori, final_boxes, final_scores, final_cls_inds,
+                            conf=0.1, class_names=VOC_CLASSES)
+        else:
+            # 没有检测到任何目标
+            final_boxes = np.zeros((0, 4))
+            final_scores = np.zeros(0)
+            final_cls_inds = np.zeros(0)
+            origin_img = img_ori
     else:
+        # 没有结果
         final_boxes = np.zeros((0, 4))
         final_scores = np.zeros(0)
         final_cls_inds = np.zeros(0)
+        origin_img = img_ori
 
     print("final_boxes", final_boxes)
 
     output_pairs_data_location(np.array(final_cls_inds), np.array(final_boxes),
                                package_classes)  # 将yolox检测的pairs和data进行匹配输入到txt文本中
+    
+    
+    output_dir = "Result\\Package_extract\\onnx_output"
+
+    # 确保输出目录存在
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 基于原文件名生成输出路径
+    filename = os.path.basename(img_path)  # 获取原文件名
+    output_path = os.path.join(output_dir, filename)
+
+    # 保存图像
+    cv2.imwrite(output_path, origin_img)
+    print(f"图像已保存到: {output_path}")
     '''
     final_boxes:记录yolox检测的坐标位置np(, 4)[x1,y1,x2,y2]
     final_cls_inds:记录每个yolox检测的种类np(, )[1,2,3,]
     final_scores:记录yolox每个检测的分数np(, )[80.9,90.1,50.2,]
     '''
 
-    mkdir(args.output_dir)
-    output_path = os.path.join(args.output_dir, os.path.basename(args.image_path))
-    cv2.imwrite(output_path, origin_img)
 
 
-def output_pairs_data_location(cls, bboxes, package_classes, output_path=None):
+def output_pairs_data_location(cls, bboxes, package_classes,output_path=None):
     #########################################输出识别的类别和对角线坐标#############################################################
 
     # print("cls",cls)#tensor([1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0.])
@@ -344,7 +397,7 @@ def output_pairs_data_location(cls, bboxes, package_classes, output_path=None):
     26'BGA_serial_number'
     27'BGA_serial_letter'
     28'BGA_Border'
-
+    
     '''
     '''
     'multi_value_1', 
@@ -368,89 +421,88 @@ def output_pairs_data_location(cls, bboxes, package_classes, output_path=None):
     #     "detections": []
     # }
     # 获取两种类型的数量
-    # print('是否开始调试')
+    print('是否开始调试')
     for i in range(len(cls)):
         if package_classes == 'BGA':
-            if cls[i] == 8:
+            if cls[i] == 10:
                 other_num += 1
                 print('*************************')
                 print(f'other_num:{other_num}')
-            if cls[i] == 0 or cls[i] == 1 or cls[i] == 2 or cls[i] == 3:
+            if cls[i] == 5 or cls[i] == 12 or cls[i] == 13 or cls[i] == 30:
                 numbers_num += 1
-            if cls[i] == 9:
+            if cls[i] == 6:
                 BGA_serial_num_num += 1
-            if cls[i] == 10:
+            if cls[i] == 7:
                 BGA_serial_letter_num += 1
-            if cls[i] == 4 or cls[i] == 5 or cls[i] == 6 or cls[i] == 7:
+            if cls[i] == 1 or cls[i] == 2 or cls[i] == 3 or cls[i] == 4:
                 pairs_num += 1
-            if cls[i] == 11:
+            if cls[i] == 9:
                 border_num += 1
-            if cls[i] == 12:
+            if cls[i] == 8:
                 pin_num += 1
 
         else:
-            if cls[i] == 11:
+            if cls[i] == 10:
                 other_num += 1
-            if cls[i] == 0 or cls[i] == 1 or cls[i] == 2 or cls[i] == 3 or cls[i] == 4 or cls[i] == 5 or cls[i] == 23:
+            if cls[i] == 5 or cls[i] == 12 or cls[i] == 13 or cls[i] == 30 or cls[i] == 21 or cls[i] == 11:
                 numbers_num += 1
-            if cls[i] == 12:
+            if cls[i] == 18:
                 serial_num_num += 1
                 print(f'serial_num_num:{serial_num_num}')
-            if cls[i] == 7 or cls[i] == 8 or cls[i] == 9 or cls[i] == 10:
+            if cls[i] == 1 or cls[i] == 2 or cls[i] == 3 or cls[i] == 4:
                 pairs_num += 1
-            if cls[i] == 6:
+            if cls[i] == 24:
                 angle_pairs_num += 1
 
             if package_classes == 'QFP':
-                if cls[i] == 20:
+                if cls[i] == 17:
                     pin_num += 1
-                if cls[i] == 19:
+                if cls[i] == 19 or cls[i] == 23:
                     pad_num += 1
-                if cls[i] == 13:
+                if cls[i] == 16:
                     print(f'border_num:{border_num}')
                     border_num += 1
-                if cls[i] == 18:
+                if cls[i] == 22:
                     print(f'border_num:{border_num}')
                     border_num += 1
-                if cls[i] == 21:
+                if cls[i] == 32:
                     print(f'border_num:{border_num}')
                     border_num += 1
             if package_classes == 'QFN':
-                if cls[i] == 15:
+                if cls[i] == 19 or cls[i] == 23:
                     pad_num += 1
-                if cls[i] == 13:
+                if cls[i] == 16:
                     print(f'border_num:{border_num}')
                     border_num += 1
-                if cls[i] == 18:
+                if cls[i] == 22:
                     print(f'border_num:{border_num}')
                     border_num += 1
-                if cls[i] == 21:
+                if cls[i] == 32:
                     print(f'border_num:{border_num}')
                     border_num += 1
+
 
             if package_classes == 'SOP':
+                if cls[i] == 31:
+                    pin_num += 1
+                if cls[i] == 16:
+                    print(f'border_num:{border_num}')
+                    border_num += 1
                 if cls[i] == 22:
-                    pin_num += 1
-                if cls[i] == 13:
                     print(f'border_num:{border_num}')
                     border_num += 1
-                if cls[i] == 18:
+                if cls[i] == 32:
                     print(f'border_num:{border_num}')
                     border_num += 1
-                if cls[i] == 21:
+            if package_classes == 'SON':
+                if cls[i] == 23:
+                    pad_num += 1
+                if cls[i] == 22:
                     print(f'border_num:{border_num}')
                     border_num += 1
-            if package_classes == 'BGA':
-                if cls[i] == 26:
-                    BGA_serial_num_num += 1
-                if cls[i] == 27:
-                    BGA_serial_letter_num += 1
-                if cls[i] == 28:
-                    border_num += 1
-                if cls[i] == 29:
-                    pin_num += 1
+                
 
-        #         # 添加检测结果到列表
+                # 添加检测结果到列表
         # detection_results["detections"].append({
         #     "class_id": int(cls[i]),
         #     "class_name": cls[i],
@@ -486,47 +538,47 @@ def output_pairs_data_location(cls, bboxes, package_classes, output_path=None):
     s = 0
     for i in range(len(cls)):
         if package_classes == 'BGA':
-            if cls[i] == 8:
+            if cls[i] == 10:
                 yolox_other[k][0] = bboxes[i][0]
                 yolox_other[k][1] = bboxes[i][1]
                 yolox_other[k][2] = bboxes[i][2]
                 yolox_other[k][3] = bboxes[i][3]
                 k = k + 1
-            if cls[i] == 0 or cls[i] == 1 or cls[i] == 2 or cls[i] == 3:
+            if cls[i] == 5 or cls[i] == 12 or cls[i] == 13 or cls[i] == 30:
                 yolox_num[j][0] = bboxes[i][0]
                 yolox_num[j][1] = bboxes[i][1]
                 yolox_num[j][2] = bboxes[i][2]
                 yolox_num[j][3] = bboxes[i][3]
                 j = j + 1
-            if cls[i] == 9:
+            if cls[i] == 6:
                 yolox_BGA_serial_num[s][0] = bboxes[i][0]
                 yolox_BGA_serial_num[s][1] = bboxes[i][1]
                 yolox_BGA_serial_num[s][2] = bboxes[i][2]
                 yolox_BGA_serial_num[s][3] = bboxes[i][3]
                 s = s + 1
-            if cls[i] == 10:
+            if cls[i] == 7:
                 yolox_BGA_serial_letter[r][0] = bboxes[i][0]
                 yolox_BGA_serial_letter[r][1] = bboxes[i][1]
                 yolox_BGA_serial_letter[r][2] = bboxes[i][2]
                 yolox_BGA_serial_letter[r][3] = bboxes[i][3]
                 r = r + 1
-            if cls[i] == 4 or cls[i] == 5 or cls[i] == 6 or cls[i] == 7:
+            if cls[i] == 1 or cls[i] == 2 or cls[i] == 3 or cls[i] == 4:
                 yolox_pairs[p][0] = bboxes[i][0]
                 yolox_pairs[p][1] = bboxes[i][1]
                 yolox_pairs[p][2] = bboxes[i][2]
                 yolox_pairs[p][3] = bboxes[i][3]
-                if cls[i] == 4 or cls[i] == 5:
-                    yolox_pairs[p][4] = 1
-                else:
+                if cls[i] == 1 or cls[i] == 2:
                     yolox_pairs[p][4] = 0
+                else:
+                    yolox_pairs[p][4] = 1
                 p = p + 1
-            if cls[i] == 11:
+            if cls[i] == 9:
                 yolox_border[o][0] = bboxes[i][0]
                 yolox_border[o][1] = bboxes[i][1]
                 yolox_border[o][2] = bboxes[i][2]
                 yolox_border[o][3] = bboxes[i][3]
                 o = o + 1
-            if cls[i] == 12:
+            if cls[i] == 8:
                 yolox_pin[m][0] = bboxes[i][0]
                 yolox_pin[m][1] = bboxes[i][1]
                 yolox_pin[m][2] = bboxes[i][2]
@@ -535,68 +587,68 @@ def output_pairs_data_location(cls, bboxes, package_classes, output_path=None):
 
         else:
 
-            if cls[i] == 0 or cls[i] == 1 or cls[i] == 2 or cls[i] == 3 or cls[i] == 4 or cls[i] == 5 or cls[i] == 23:
+            if cls[i] == 5 or cls[i] == 12 or cls[i] == 13 or cls[i] == 30 or cls[i] == 21 or cls[i] == 11:
                 yolox_num[j][0] = bboxes[i][0]
                 yolox_num[j][1] = bboxes[i][1]
                 yolox_num[j][2] = bboxes[i][2]
                 yolox_num[j][3] = bboxes[i][3]
                 j = j + 1
-            if cls[i] == 11:
+            if cls[i] == 10:
                 yolox_other[k][0] = bboxes[i][0]
                 yolox_other[k][1] = bboxes[i][1]
                 yolox_other[k][2] = bboxes[i][2]
                 yolox_other[k][3] = bboxes[i][3]
                 k = k + 1
-            if cls[i] == 12:
+            if cls[i] == 18:
                 yolox_serial_num[l][0] = bboxes[i][0]
                 yolox_serial_num[l][1] = bboxes[i][1]
                 yolox_serial_num[l][2] = bboxes[i][2]
                 yolox_serial_num[l][3] = bboxes[i][3]
                 l = l + 1
 
-            if cls[i] == 7 or cls[i] == 8 or cls[i] == 9 or cls[i] == 10:
+            if cls[i] == 1 or cls[i] == 2 or cls[i] == 3 or cls[i] == 4:
                 yolox_pairs[p][0] = bboxes[i][0]
                 yolox_pairs[p][1] = bboxes[i][1]
                 yolox_pairs[p][2] = bboxes[i][2]
                 yolox_pairs[p][3] = bboxes[i][3]
-                if cls[i] == 9 or cls[i] == 10:
+                if cls[i] == 1 or cls[i] == 2:
                     yolox_pairs[p][4] = 0
                 else:
                     yolox_pairs[p][4] = 1
                 p = p + 1
-            if cls[i] == 6:
+            if cls[i] == 24:
                 yolox_angle_pairs[q][0] = bboxes[i][0]
                 yolox_angle_pairs[q][1] = bboxes[i][1]
                 yolox_angle_pairs[q][2] = bboxes[i][2]
                 yolox_angle_pairs[q][3] = bboxes[i][3]
                 q = q + 1
             if package_classes == 'QFP':
-                if cls[i] == 20:
+                if cls[i] == 17:
                     yolox_pin[m][0] = bboxes[i][0]
                     yolox_pin[m][1] = bboxes[i][1]
                     yolox_pin[m][2] = bboxes[i][2]
                     yolox_pin[m][3] = bboxes[i][3]
                     m = m + 1
-                if cls[i] == 19:
+                if cls[i] == 19 or cls[i] == 23:
                     yolox_pad[n][0] = bboxes[i][0]
                     yolox_pad[n][1] = bboxes[i][1]
                     yolox_pad[n][2] = bboxes[i][2]
                     yolox_pad[n][3] = bboxes[i][3]
                     n = n + 1
-                if cls[i] == 18:
+                if cls[i] == 16:
                     yolox_border[o][0] = bboxes[i][0]
                     yolox_border[o][1] = bboxes[i][1]
                     yolox_border[o][2] = bboxes[i][2]
                     yolox_border[o][3] = bboxes[i][3]
                     o = o + 1
-                if cls[i] == 13:
+                if cls[i] == 22:
                     print("QFN_borderrr")
                     yolox_border[o][0] = bboxes[i][0]
                     yolox_border[o][1] = bboxes[i][1]
                     yolox_border[o][2] = bboxes[i][2]
                     yolox_border[o][3] = bboxes[i][3]
                     o = o + 1
-                if cls[i] == 21:
+                if cls[i] == 32:
                     print("SOP_borderrr")
                     yolox_border[o][0] = bboxes[i][0]
                     yolox_border[o][1] = bboxes[i][1]
@@ -604,26 +656,26 @@ def output_pairs_data_location(cls, bboxes, package_classes, output_path=None):
                     yolox_border[o][3] = bboxes[i][3]
                     o = o + 1
             if package_classes == 'QFN':
-                if cls[i] == 15:
+                if cls[i] == 19 or cls[i] == 23:
                     yolox_pad[n][0] = bboxes[i][0]
                     yolox_pad[n][1] = bboxes[i][1]
                     yolox_pad[n][2] = bboxes[i][2]
                     yolox_pad[n][3] = bboxes[i][3]
                     n = n + 1
-                if cls[i] == 13:
+                if cls[i] == 16:
                     print("QFN_borderrr")
                     yolox_border[o][0] = bboxes[i][0]
                     yolox_border[o][1] = bboxes[i][1]
                     yolox_border[o][2] = bboxes[i][2]
                     yolox_border[o][3] = bboxes[i][3]
                     o = o + 1
-                if cls[i] == 18:
+                if cls[i] == 22:
                     yolox_border[o][0] = bboxes[i][0]
                     yolox_border[o][1] = bboxes[i][1]
                     yolox_border[o][2] = bboxes[i][2]
                     yolox_border[o][3] = bboxes[i][3]
                     o = o + 1
-                if cls[i] == 21:
+                if cls[i] == 32:
                     print("SOP_borderrr")
                     yolox_border[o][0] = bboxes[i][0]
                     yolox_border[o][1] = bboxes[i][1]
@@ -631,57 +683,72 @@ def output_pairs_data_location(cls, bboxes, package_classes, output_path=None):
                     yolox_border[o][3] = bboxes[i][3]
                     o = o + 1
             if package_classes == 'SOP':
-                if cls[i] == 22:
+                if cls[i] == 31:
                     yolox_pin[m][0] = bboxes[i][0]
                     yolox_pin[m][1] = bboxes[i][1]
                     yolox_pin[m][2] = bboxes[i][2]
                     yolox_pin[m][3] = bboxes[i][3]
                     m = m + 1
-                if cls[i] == 21:
+                if cls[i] == 16:
                     print("SOP_borderrr")
                     yolox_border[o][0] = bboxes[i][0]
                     yolox_border[o][1] = bboxes[i][1]
                     yolox_border[o][2] = bboxes[i][2]
                     yolox_border[o][3] = bboxes[i][3]
                     o = o + 1
-                if cls[i] == 18:
+                if cls[i] == 22:
                     yolox_border[o][0] = bboxes[i][0]
                     yolox_border[o][1] = bboxes[i][1]
                     yolox_border[o][2] = bboxes[i][2]
                     yolox_border[o][3] = bboxes[i][3]
                     o = o + 1
-                if cls[i] == 13:
+                if cls[i] == 32:
                     print("QFN_borderrr")
                     yolox_border[o][0] = bboxes[i][0]
                     yolox_border[o][1] = bboxes[i][1]
                     yolox_border[o][2] = bboxes[i][2]
                     yolox_border[o][3] = bboxes[i][3]
                     o = o + 1
-            if package_classes == 'BGA':
-                if cls[i] == 26:
-                    yolox_BGA_serial_num[s][0] = bboxes[i][0]
-                    yolox_BGA_serial_num[s][1] = bboxes[i][1]
-                    yolox_BGA_serial_num[s][2] = bboxes[i][2]
-                    yolox_BGA_serial_num[s][3] = bboxes[i][3]
-                    s = s + 1
-                if cls[i] == 27:
-                    yolox_BGA_serial_letter[r][0] = bboxes[i][0]
-                    yolox_BGA_serial_letter[r][1] = bboxes[i][1]
-                    yolox_BGA_serial_letter[r][2] = bboxes[i][2]
-                    yolox_BGA_serial_letter[r][3] = bboxes[i][3]
-                    r = r + 1
-                if cls[i] == 28:
+            if package_classes == 'SON':
+                if cls[i] == 23:
+                    yolox_pad[n][0] = bboxes[i][0]
+                    yolox_pad[n][1] = bboxes[i][1]
+                    yolox_pad[n][2] = bboxes[i][2]
+                    yolox_pad[n][3] = bboxes[i][3] 
+                    n = n + 1
+                if cls[i] == 22:
                     yolox_border[o][0] = bboxes[i][0]
                     yolox_border[o][1] = bboxes[i][1]
                     yolox_border[o][2] = bboxes[i][2]
                     yolox_border[o][3] = bboxes[i][3]
                     o = o + 1
-                if cls[i] == 29:
-                    yolox_pin[m][0] = bboxes[i][0]
-                    yolox_pin[m][1] = bboxes[i][1]
-                    yolox_pin[m][2] = bboxes[i][2]
-                    yolox_pin[m][3] = bboxes[i][3]
-                    m = m + 1
+                
+            # if package_classes == 'BGA':
+            #     if cls[i] == 26:
+            #         yolox_BGA_serial_num[s][0] = bboxes[i][0]
+            #         yolox_BGA_serial_num[s][1] = bboxes[i][1]
+            #         yolox_BGA_serial_num[s][2] = bboxes[i][2]
+            #         yolox_BGA_serial_num[s][3] = bboxes[i][3]
+            #         s = s + 1
+            #     if cls[i] == 27:
+            #         yolox_BGA_serial_letter[r][0] = bboxes[i][0]
+            #         yolox_BGA_serial_letter[r][1] = bboxes[i][1]
+            #         yolox_BGA_serial_letter[r][2] = bboxes[i][2]
+            #         yolox_BGA_serial_letter[r][3] = bboxes[i][3]
+            #         r = r + 1
+            #     if cls[i] == 28:
+            #         yolox_border[o][0] = bboxes[i][0]
+            #         yolox_border[o][1] = bboxes[i][1]
+            #         yolox_border[o][2] = bboxes[i][2]
+            #         yolox_border[o][3] = bboxes[i][3]
+            #         o = o + 1
+            #     if cls[i] == 29:
+            #         yolox_pin[m][0] = bboxes[i][0]
+            #         yolox_pin[m][1] = bboxes[i][1]
+            #         yolox_pin[m][2] = bboxes[i][2]
+            #         yolox_pin[m][3] = bboxes[i][3]
+            #         m = m + 1
+
 
     global YOLOX_num
     global YOLOX_other
@@ -735,9 +802,9 @@ def begain_output_pairs_data_location(img_path, package_classes):
 
     # YOLOX_weight = "DFN_SON_0831.onnx"
     if package_classes == 'BGA':
-        YOLOX_weight = 'BGA_0730.onnx'
+        YOLOX_weight = 'best_v131205.onnx'
     else:
-        YOLOX_weight = "QFP_SOP_QFN.onnx"
+        YOLOX_weight = "best_v131205.onnx"
     # 使用统一的路径管理加载模型
     weight_path = yolo_model_path("package_model", YOLOX_weight)
     # onnx_inference(img_path, package_classes, weight='model/yolo_model/package_model/QFP_SOP_QFN.onnx', )

@@ -1,6 +1,6 @@
 # 外部文件：
 from package_core.PackageExtract.common_pipeline import (
-    compute_qfp_parameters,
+    compute_BGA_parameters,
     enrich_pairs_with_lines,
     extract_pin_serials,
     finalize_pairs,
@@ -85,7 +85,7 @@ def extract_package(package_classes, page_num):
         pad_x,pad_y
     '''
     # 语义对齐
-    QFP_parameter_list, nx, ny = compute_qfp_parameters(L3)
+    QFP_parameter_list, nx, ny = compute_BGA_parameters(L3)
     # 整理获得的参数
     parameter_list = get_QFP_parameter_data(QFP_parameter_list, nx, ny)
 
@@ -394,7 +394,7 @@ def get_max_medium_min(L3, key):
     side_yolox_num = find_list(L3, 'side_yolox_num')
     detailed_yolox_num = find_list(L3, 'detailed_yolox_num')
 
-    top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data = data_wrangling(key, top_dbnet_data,
+    top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data = data_wrangling_optimized(key, top_dbnet_data,
                                                                                      bottom_dbnet_data,
                                                                                      side_dbnet_data,
                                                                                      detailed_dbnet_data,
@@ -555,14 +555,14 @@ def find_QFP_parameter(L3):
 
     # (9)输出序号nx,ny和body_x、body_y
     nx, ny = get_serial(top_serial_numbers_data, bottom_serial_numbers_data)
-    body_x, body_y = get_QFP_body(yolox_pairs_top, top_yolox_pairs_length, yolox_pairs_bottom,
+    body_x, body_y = get_body(yolox_pairs_top, top_yolox_pairs_length, yolox_pairs_bottom,
                                   bottom_yolox_pairs_length, top_border, bottom_border, top_ocr_data,
                                   bottom_ocr_data)
-    get_QFP_body(yolox_pairs_top, top_yolox_pairs_length, yolox_pairs_bottom,
+    get_body(yolox_pairs_top, top_yolox_pairs_length, yolox_pairs_bottom,
                                   bottom_yolox_pairs_length, top_border, bottom_border, top_ocr_data,
                                   bottom_ocr_data)
     # (10)初始化参数列表
-    QFP_parameter_list = get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data,
+    QFP_parameter_list = get_BGA_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data,
                                                 body_x, body_y)
     # (11)整理参数列表
     QFP_parameter_list = resort_parameter_list_2(QFP_parameter_list)

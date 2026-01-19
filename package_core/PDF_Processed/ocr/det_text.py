@@ -15,6 +15,15 @@ import warnings
 import onnxruntime
 from package_core.PDF_Processed.ocr.utils.upline import uplineCoordinate, isExistUpline
 
+# 导入性能分析工具
+try:
+    from package_core.profiler import model_timer
+except ImportError:
+    from contextlib import contextmanager
+    @contextmanager
+    def model_timer(name, extra_info=None):
+        yield
+
 
 
 def calculate_overlap_percentage(box1, box2):
@@ -512,7 +521,9 @@ class det_rec_functions(object):
         shape_part_list = np.expand_dims(shape_part_list, axis=0)
         inputs_part = {self.onet_det_session.get_inputs()[0].name: img_part}
         try:
-            outs_part = self.onet_det_session.run(None, inputs_part)
+            # 使用model_timer记录DBNet-OCR检测推理时间
+            with model_timer("DBNet-OCR检测", {"input_shape": str(img_part.shape)}):
+                outs_part = self.onet_det_session.run(None, inputs_part)
         except Exception as e:
             print(f"检测模型运行错误 ({name}): {e}")
             return []

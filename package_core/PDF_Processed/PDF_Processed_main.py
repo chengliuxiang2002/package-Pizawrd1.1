@@ -6,6 +6,7 @@ from package_core.PDF_Processed.DETR_detect import detect_components
 from package_core.PDF_Processed.match_package_and_keywords import match_keywords_for_all_pages
 from package_core.PDF_Processed.match_package_and_views import process_package_matching
 import numpy as np
+from package_core.profiler import step_timer, profiler
 
 # 在类外部定义颜色常量
 PACKAGE_COLOR = (1, 0, 0)  # 红色
@@ -29,12 +30,14 @@ class PackageDetectionPipeline:
     def step1_preprocess_pages(self):
         """步骤1: 去水印并筛选出需要处理的页面列表。"""
         print("步骤1: 去除水印并筛选页面...")
-        watermark_remove(self.pdf_path)
+        with step_timer("Step1-去水印"):
+            watermark_remove(self.pdf_path)
 
         with fitz.open(self.pdf_path) as doc:
             page_count = doc.page_count
 
-        page_list = extract_package_page_list(self.pdf_path)
+        with step_timer("Step1-筛选页面"):
+            page_list = extract_package_page_list(self.pdf_path)
 
         # 扩展页面搜索范围
         expanded_page_list = set()
@@ -54,7 +57,8 @@ class PackageDetectionPipeline:
             return None
 
         # detect_components 返回原始的检测结果
-        detection_results = detect_components(self.pdf_path, page_list)
+        with step_timer("Step2-DETR检测", {"page_count": len(page_list)}):
+            detection_results = detect_components(self.pdf_path, page_list)
         return detection_results
 
     def step3_match_keywords(self, detection_results, page_list):
@@ -66,7 +70,8 @@ class PackageDetectionPipeline:
 
         # 这个新函数将处理所有页面的关键字匹配，并返回修改后的结果
         # 它不再依赖全局变量
-        modified_results = match_keywords_for_all_pages(self.pdf_path, page_list, detection_results)
+        with step_timer("Step3-关键词匹配"):
+            modified_results = match_keywords_for_all_pages(self.pdf_path, page_list, detection_results)
         return modified_results
 
     def step4_group_package_components(self, modified_detr_results):
@@ -77,5 +82,6 @@ class PackageDetectionPipeline:
             return None, None, None
 
         # process_package_matching 接收修改后的结果作为输入
-        package_data, data2, have_page, modified_detr_results= process_package_matching(self.pdf_path, modified_detr_results)
+        with step_timer("Step4-组件分组"):
+            package_data, data2, have_page, modified_detr_results= process_package_matching(self.pdf_path, modified_detr_results)
         return package_data, data2, have_page, modified_detr_results

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import math
 from math import sqrt
 import cv2
@@ -20,6 +21,15 @@ from package_core.PackageExtract.yolox_onnx_py.onnx_output_bottom_body_location 
 
 from package_core.PackageExtract.onnx_use import Run_onnx_det
 from package_core.PackageExtract.onnx_use import Run_onnx
+from pathlib import Path
+
+log_path = Path("test_data.txt")
+# 把 print 的输出复制一份到文件
+def tee_print(*args, sep=" ", end="\n"):
+    msg = sep.join(map(str, args)) + end
+    print(*args, sep=sep, end=end)
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(msg)
 
 # 导入统一路径管理
 try:
@@ -73,7 +83,337 @@ def delete_other(other, data):
             new_data = np.r_[new_data, [data[i]]]
     return new_data
 
+##############################
 
+def remove_duplicate_pairs(pairs_length):
+    """
+    去除使用相同引线组合的重复箭头对，只保留引线到箭头对框距离最近的那个
+    
+    参数:
+    pairs_length: np.二维数组 (n, 13) [pairs_x1_y1_x2_y2, 引线1_x1_y1_x2_y2, 引线2_x1_y1_x2_y2, 两引线距离]
+    
+    返回:
+    去重后的 pairs_length
+    """
+    print("开始检查重复引线...")
+    
+    # 创建一个字典来存储引线组合和对应的箭头对信息
+    line_pairs_dict = {}
+    
+    for i in range(len(pairs_length)):
+        # 提取两条引线的坐标，作为唯一标识
+        line1_key = tuple(pairs_length[i][4:8].astype(int))  # 引线1的坐标
+        line2_key = tuple(pairs_length[i][8:12].astype(int)) # 引线2的坐标
+        
+        # 创建引线组合的唯一标识符（不考虑顺序）
+        line_pair_key = tuple(sorted([line1_key, line2_key]))
+        
+        # 计算引线到箭头对框的距离
+        arrow_box = [pairs_length[i][0], pairs_length[i][1], pairs_length[i][2], pairs_length[i][3]]
+        
+        # 对于每条引线，计算到箭头对框的最小距离
+        line1_distance = calculate_line_to_box_distance(
+            [pairs_length[i][4], pairs_length[i][5], pairs_length[i][6], pairs_length[i][7]], 
+            arrow_box
+        )
+        
+        line2_distance = calculate_line_to_box_distance(
+            [pairs_length[i][8], pairs_length[i][9], pairs_length[i][10], pairs_length[i][11]], 
+            arrow_box
+        )
+        
+        # 使用两条引线到箭头对框的平均距离作为总距离
+        distance = (line1_distance + line2_distance) / 2
+        
+        # 如果这个引线组合已经存在，比较距离
+        if line_pair_key in line_pairs_dict:
+            existing_distance, existing_index = line_pairs_dict[line_pair_key]
+            if distance < existing_distance:
+                # 当前箭头对距离更近，更新字典
+                line_pairs_dict[line_pair_key] = (distance, i)
+                print(f"发现重复引线组合，更新为距离更近的箭头对，距离: {distance:.2f}")
+            else:
+                print(f"发现重复引线组合，保留原有箭头对，距离: {existing_distance:.2f}")
+        else:
+            # 新的引线组合，添加到字典
+            line_pairs_dict[line_pair_key] = (distance, i)
+    
+    # 构建去重后的结果
+    if len(line_pairs_dict) < len(pairs_length):
+        print(f"去重前: {len(pairs_length)} 个箭头对，去重后: {len(line_pairs_dict)} 个箭头对")
+        
+        unique_indices = [item[1] for item in line_pairs_dict.values()]
+        pairs_length = pairs_length[unique_indices]
+    else:
+        print("没有发现重复的引线组合")
+    
+    return pairs_length
+
+
+def calculate_line_to_box_distance(line, box):
+    """
+    计算直线到矩形框的最小距离
+    line: [x1, y1, x2, y2] 直线端点坐标
+    box: [x1, y1, x2, y2] 矩形框左上角和右下角坐标
+    返回: 直线到矩形框的最小距离
+    """
+    # 提取直线端点
+    line_p1 = (line[0], line[1])
+    line_p2 = (line[2], line[3])
+    
+    # 提取矩形框的四个角点
+    box_p1 = (box[0], box[1])  # 左上角
+    box_p2 = (box[2], box[1])  # 右上角
+    box_p3 = (box[2], box[3])  # 右下角
+    box_p4 = (box[0], box[3])  # 左下角
+    
+    # 计算直线到矩形框四条边的最小距离
+    distances = []
+    
+    # 直线到矩形框上边的距离
+    distances.append(line_segment_distance(line_p1, line_p2, box_p1, box_p2))
+    # 直线到矩形框右边的距离
+    distances.append(line_segment_distance(line_p1, line_p2, box_p2, box_p3))
+    # 直线到矩形框下边的距离
+    distances.append(line_segment_distance(line_p1, line_p2, box_p3, box_p4))
+    # 直线到矩形框左边的距离
+    distances.append(line_segment_distance(line_p1, line_p2, box_p4, box_p1))
+    
+    return min(distances)
+
+
+def line_segment_distance(p1, p2, p3, p4):
+    """
+    计算两条线段之间的最短距离
+    p1, p2: 第一条线段的两个端点
+    p3, p4: 第二条线段的两个端点
+    """
+    # 计算两条线段端点之间的距离
+    d1 = point_to_line_segment_distance(p1, p3, p4)
+    d2 = point_to_line_segment_distance(p2, p3, p4)
+    d3 = point_to_line_segment_distance(p3, p1, p2)
+    d4 = point_to_line_segment_distance(p4, p1, p2)
+    
+    return min(d1, d2, d3, d4)
+
+
+def point_to_line_segment_distance(point, line_p1, line_p2):
+    """
+    计算点到线段的最短距离
+    point: (x, y) 点坐标
+    line_p1, line_p2: (x, y) 线段的两个端点
+    """
+    x, y = point
+    x1, y1 = line_p1
+    x2, y2 = line_p2
+    
+    # 线段长度的平方
+    l2 = (x2 - x1)**2 + (y2 - y1)**2
+    
+    if l2 == 0:  # 线段退化为点
+        return ((x - x1)**2 + (y - y1)**2)**0.5
+    
+    # 计算投影比例 t
+    t = max(0, min(1, ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / l2))
+    
+    # 计算投影点坐标
+    projection_x = x1 + t * (x2 - x1)
+    projection_y = y1 + t * (y2 - y1)
+    
+    # 返回点到投影点的距离
+    return ((x - projection_x)**2 + (y - projection_y)**2)**0.5
+##############################
+def remove_contained_arrows(pairs_length, angle_threshold=15, position_threshold=20, overlap_threshold=0.7):
+    """
+    去除被包含在长箭头内的短箭头，要求方向一致且位置对齐
+    
+    参数:
+    pairs_length: np.array, 形状为(n, 13)的二维数组
+    angle_threshold: 角度阈值(度)，默认15度内认为方向一致
+    position_threshold: 位置阈值(像素)，默认20像素内认为位置对齐
+    overlap_threshold: 重叠阈值，默认0.7表示70%以上重叠则认为被包含
+    """
+    n = pairs_length.shape[0]
+    if n == 0:
+        return pairs_length
+    
+    # 提取箭头坐标 (前4列)
+    arrows = pairs_length[:, :4]
+    
+    # 计算每个箭头的长度和角度
+    arrow_lengths = np.sqrt((arrows[:, 2] - arrows[:, 0])**2 + 
+                           (arrows[:, 3] - arrows[:, 1])**2)
+    arrow_angles = np.degrees(np.arctan2(arrows[:, 3] - arrows[:, 1], 
+                                        arrows[:, 2] - arrows[:, 0]))
+    
+    # 计算每个箭头的中心点
+    centers_x = (arrows[:, 0] + arrows[:, 2]) / 2
+    centers_y = (arrows[:, 1] + arrows[:, 3]) / 2
+    
+    # 按箭头长度降序排序
+    sorted_indices = np.argsort(arrow_lengths)[::-1]
+    
+    # 标记要保留的箭头
+    keep_mask = np.ones(n, dtype=bool)
+    
+    for i in range(n):
+        if not keep_mask[sorted_indices[i]]:
+            continue
+            
+        long_arrow_idx = sorted_indices[i]
+        long_arrow = arrows[long_arrow_idx]
+        long_angle = arrow_angles[long_arrow_idx]
+        long_center_x = centers_x[long_arrow_idx]
+        long_center_y = centers_y[long_arrow_idx]
+        
+        for j in range(i + 1, n):
+            short_arrow_idx = sorted_indices[j]
+            
+            if not keep_mask[short_arrow_idx]:
+                continue
+                
+            short_arrow = arrows[short_arrow_idx]
+            short_angle = arrow_angles[short_arrow_idx]
+            short_center_x = centers_x[short_arrow_idx]
+            short_center_y = centers_y[short_arrow_idx]
+            
+            # 检查角度是否一致（考虑180度对称性）
+            angle_diff = abs(short_angle - long_angle)
+            angle_diff = min(angle_diff, 180 - angle_diff)  # 处理180度对称
+            
+            # 检查位置是否对齐
+            position_aligned = are_arrows_aligned(
+                long_arrow, short_arrow, long_angle, position_threshold)
+            
+            # 只有方向一致、位置对齐且被包含时才去除
+            if (angle_diff <= angle_threshold and 
+                position_aligned and 
+                is_contained(short_arrow, long_arrow, overlap_threshold)):
+                keep_mask[short_arrow_idx] = False
+    
+    return pairs_length[keep_mask]
+
+def are_arrows_aligned(long_arrow, short_arrow, long_angle, position_threshold):
+    """
+    检查两个箭头是否位置对齐
+    
+    对于竖直箭头，检查x坐标是否接近
+    对于水平箭头，检查y坐标是否接近
+    对于斜向箭头，检查垂直距离是否接近
+    """
+    # 判断箭头方向
+    is_vertical = abs(long_angle) > 45 and abs(long_angle) < 135
+    is_horizontal = abs(long_angle) <= 45 or abs(long_angle) >= 135
+    
+    if is_vertical:
+        # 对于竖直箭头，比较x坐标
+        long_center_x = (long_arrow[0] + long_arrow[2]) / 2
+        short_center_x = (short_arrow[0] + short_arrow[2]) / 2
+        return abs(long_center_x - short_center_x) <= position_threshold
+    
+    elif is_horizontal:
+        # 对于水平箭头，比较y坐标
+        long_center_y = (long_arrow[1] + long_arrow[3]) / 2
+        short_center_y = (short_arrow[1] + short_arrow[3]) / 2
+        return abs(long_center_y - short_center_y) <= position_threshold
+    
+    else:
+        # 对于斜向箭头，计算到长箭头直线的垂直距离
+        # 使用点到直线的距离公式
+        dx = long_arrow[2] - long_arrow[0]
+        dy = long_arrow[3] - long_arrow[1]
+        length = np.sqrt(dx*dx + dy*dy)
+        
+        if length == 0:
+            return False
+            
+        # 计算短箭头中心到长箭头直线的距离
+        short_center_x = (short_arrow[0] + short_arrow[2]) / 2
+        short_center_y = (short_arrow[1] + short_arrow[3]) / 2
+        
+        # 点到直线的距离公式
+        distance = abs(dy*short_center_x - dx*short_center_y + 
+                      long_arrow[2]*long_arrow[1] - long_arrow[3]*long_arrow[0]) / length
+        
+        return distance <= position_threshold
+
+def is_contained(short_arrow, long_arrow, overlap_threshold=0.7):
+    """
+    判断短箭头是否被长箭头包含
+    """
+    # 计算短箭头的长度
+    short_len = np.sqrt((short_arrow[2] - short_arrow[0])**2 + 
+                       (short_arrow[3] - short_arrow[1])**2)
+    
+    # 计算短箭头两个端点到长箭头线段的距离
+    dist1 = point_to_line_distance(short_arrow[0], short_arrow[1], 
+                                  long_arrow[0], long_arrow[1], 
+                                  long_arrow[2], long_arrow[3])
+    dist2 = point_to_line_distance(short_arrow[2], short_arrow[3], 
+                                  long_arrow[0], long_arrow[1], 
+                                  long_arrow[2], long_arrow[3])
+    
+    # 计算短箭头中心点到长箭头线段的距离
+    center_x = (short_arrow[0] + short_arrow[2]) / 2
+    center_y = (short_arrow[1] + short_arrow[3]) / 2
+    dist_center = point_to_line_distance(center_x, center_y,
+                                        long_arrow[0], long_arrow[1],
+                                        long_arrow[2], long_arrow[3])
+    
+    # 计算短箭头在长箭头方向上的投影长度
+    projection_ratio = calculate_projection_ratio(short_arrow, long_arrow)
+    
+    # 判断条件：两个端点距离近，中心点距离近，且在长箭头方向上有足够长的投影
+    max_distance = short_len * 0.2  # 允许的最大距离为短箭头长度的20%
+    
+    if (dist1 <= max_distance and dist2 <= max_distance and 
+        dist_center <= max_distance and projection_ratio >= overlap_threshold):
+        return True
+    
+    return False
+
+def point_to_line_distance(px, py, x1, y1, x2, y2):
+    """
+    计算点到线段的距离
+    """
+    line_len_sq = (x2 - x1)**2 + (y2 - y1)**2
+    
+    if line_len_sq == 0:
+        return np.sqrt((px - x1)**2 + (py - y1)**2)
+    
+    t = max(0, min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / line_len_sq))
+    
+    projection_x = x1 + t * (x2 - x1)
+    projection_y = y1 + t * (y2 - y1)
+    
+    return np.sqrt((px - projection_x)**2 + (py - projection_y)**2)
+
+def calculate_projection_ratio(short_arrow, long_arrow):
+    """
+    计算短箭头在长箭头方向上的投影比例
+    """
+    long_dx = long_arrow[2] - long_arrow[0]
+    long_dy = long_arrow[3] - long_arrow[1]
+    long_length = np.sqrt(long_dx**2 + long_dy**2)
+    
+    if long_length == 0:
+        return 0
+    
+    ux = long_dx / long_length
+    uy = long_dy / long_length
+    
+    short_dx = short_arrow[2] - short_arrow[0]
+    short_dy = short_arrow[3] - short_arrow[1]
+    
+    projection_length = abs(short_dx * ux + short_dy * uy)
+    short_length = np.sqrt(short_dx**2 + short_dy**2)
+    
+    if short_length == 0:
+        return 0
+    
+    return projection_length / short_length
+
+##############################
 def find_pairs_length(img_path, pairs, test_mode):
     '''
     功能：检测标尺线附近成对的引线
@@ -86,10 +426,9 @@ def find_pairs_length(img_path, pairs, test_mode):
     w, h = get_img_info(img_path)
     a = np.array(([1, 1, 1, 1]))
     if (pin_map_limation != a).all():
-        heng = (pin_map_limation[0][3] + pin_map_limation[0][1]) * 0.5 /2
-        shu = (pin_map_limation[0][2] + pin_map_limation[0][0]) * 0.5 /2
+        heng = (pin_map_limation[0][3] + pin_map_limation[0][1]) * 0.5 / 2
+        shu = (pin_map_limation[0][2] + pin_map_limation[0][0]) * 0.5 / 2
     if img_path == f'{YOLO_DATA}/side.jpg' or img_path == f'{YOLO_DATA}/top.jpg':
-        # w, h = get_img_info(img_path)
         heng = h / 2
         shu = w / 2
 
@@ -119,69 +458,163 @@ def find_pairs_length(img_path, pairs, test_mode):
     min_length = 20  # 最短直线长
     new_ver_lines = np.zeros((0, 4))
     ver_lines_shu = np.array(ver_lines_shu)
-    # ver_lines_shu = ver_lines_shu.reshape(ver_lines_shu.shape[0], -1)
     for i in range(len(ver_lines_shu)):
         if max(abs(ver_lines_shu[i][2] - ver_lines_shu[i][0]),
                abs(ver_lines_shu[i][3] - ver_lines_shu[i][1])) > min_length:
             new_ver_lines = np.r_[new_ver_lines, [ver_lines_shu[i]]]
     ver_lines_shu = new_ver_lines
-    # print("len(ver_lines_heng)", len(ver_lines_heng))
+    
+    # 新增：计算引线与箭头的匹配评分函数 - 简化版本，主要考虑距离
+    def calculate_match_score_simple(arrow_pair, line, heng, is_left=True):
+        """
+        简化版匹配评分，主要考虑距离
+        分数越高表示匹配越好
+        """
+        score = 0
+        
+        # 1. 检查引线是否在箭头范围内或附近
+        arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+        line_y_center = (line[1] + line[3]) / 2
+        line_y_range = line[3] - line[1]
+        arrow_y_range = arrow_pair[3] - arrow_pair[1]
+        
+        # 计算y方向重叠
+        y_overlap_start = max(arrow_pair[1], line[1])
+        y_overlap_end = min(arrow_pair[3], line[3])
+        y_overlap = max(0, y_overlap_end - y_overlap_start)
+        
+        # 如果完全没有重叠，检查距离是否在可接受范围内
+        if y_overlap == 0:
+            # 计算最近距离
+            y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
+            if y_distance > 3 * arrow_y_range:  # 距离超过3倍箭头高度
+                return -1000  # 完全不匹配
+        
+        # 2. 水平距离评分 - 这是最重要的因素
+        if is_left:
+            x_distance = abs(line[0] - arrow_pair[0])
+        else:
+            x_distance = abs(line[0] - arrow_pair[2])
+        
+        # 距离越小分数越高，使用指数衰减函数
+        # 距离在0-50像素内，分数为100-0
+        if x_distance <= 50:
+            score = 100 * (1 - x_distance / 50)
+        else:
+            score = max(0, 10 * (1 - x_distance / 100))  # 距离大于50时分数迅速下降
+        
+        # 3. 重叠奖励
+        if y_overlap > 0:
+            overlap_ratio = y_overlap / min(arrow_y_range, line_y_range)
+            score += 20 * overlap_ratio
+        
+        # 4. Y方向中心对齐奖励
+        center_diff = abs(arrow_y_center - line_y_center)
+        if center_diff < 30:
+            score += 10 * (1 - center_diff / 30)
+        
+        return score
+    
     ratio = 0.4
     ra = 2
+    # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\QFN\\QFN_4_test\\ver_lines_heng.txt")
+    # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\QFN\\QFN_4_test\\ver_lines_shu.txt")
     print("开始视图**")
+    
     for i in range(len(pairs)):
         print("一组pairs开始*")
         print(f'开始{pairs[i]}判断')
         print(f'横{heng}')
         print(f'竖{shu}')
+        
         if pairs[i][4] == 0:  # 外向标尺线
             print("外向")
-            ratio = 0.15
+            ratio = 0.3  # 增加ratio，让搜索范围更大
+            
             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
                 print("横向")
-                left_straight = np.zeros((0, 5))  # 存储可能匹配的左侧直线，第五位是与标尺线左端点的距离
-                right_straight = np.zeros((0, 5))  # 存储可能匹配的右侧直线，第五位是与标尺线右端点的距离
-                middle = np.zeros((5))
-                for j in range(len(ver_lines_shu)):
-                    # 1.找左端附近的直线，要求横坐标在端点附近，纵坐标穿过或者在标尺线附近
-                    if pairs[i][0] - ratio * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][0] + ratio * (
-                            pairs[i][2] - pairs[i][0]):  # 横坐标在端点附近
-                        if (not (pairs[i][1] > ver_lines_shu[j][3] or pairs[i][3] < ver_lines_shu[j][1])) or min(
-                                abs(pairs[i][1] - ver_lines_shu[j][3]), abs(pairs[i][3] - ver_lines_shu[j][1])) < ra * (
-                                pairs[i][3] - pairs[i][1]):  # 两矩形在y坐标上的高有重叠或者距离近
-                            if (pairs[i][1] < heng and ver_lines_shu[j][3] > pairs[i][3]) or (
-                                    pairs[i][1] > heng and ver_lines_shu[j][1] < pairs[i][
-                                1]):  # 要求横pairs在图片上方时，匹配的直线在横pairs下方
-                                middle[0:4] = ver_lines_shu[j]
-                                middle[4] = abs(pairs[i][0] - ver_lines_shu[j][0])
-                                left_straight = np.r_[left_straight, [middle]]
-                                print("外向横pairs找到左竖线")
-
-                    # 2.找右端附近的直线，要求横坐标在端点附近，纵坐标穿过或者在标尺线附近
-                    if pairs[i][2] - ratio * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][2] + ratio * (
-                            pairs[i][2] - pairs[i][0]):  # 横坐标在端点附近
-                        if (not (pairs[i][1] > ver_lines_shu[j][3] or pairs[i][3] < ver_lines_shu[j][1])) or min(
-                                abs(pairs[i][1] - ver_lines_shu[j][3]), abs(pairs[i][3] - ver_lines_shu[j][1])) < ra * (
-                                pairs[i][3] - pairs[i][1]):  # 两矩形在y坐标上的高有重叠或者距离近
-                            if (pairs[i][1] < heng and ver_lines_shu[j][3] > pairs[i][3]) or (
-                                    pairs[i][1] > heng and ver_lines_shu[j][1] < pairs[i][
-                                1]):  # 要求横pairs在图片上方时，匹配的直线在横pairs下方
-                                middle[0:4] = ver_lines_shu[j]
-                                middle[4] = abs(pairs[i][0] - ver_lines_shu[j][0])
-                                right_straight = np.r_[right_straight, [middle]]
-                                print("外向横pairs找到右竖线")
-                left_straight = left_straight[np.argsort(left_straight[:, 4])]  # 按距离从小到大排序
-                right_straight = right_straight[np.argsort(right_straight[:, 4])]  # 按距离从小到大排序
+                left_straight = np.zeros((0, 6))  # 增加一列存储评分
+                right_straight = np.zeros((0, 6))
+                middle = np.zeros(6)
                 
-                # 修改：根据找到的引线数量处理
+                for j in range(len(ver_lines_shu)):
+                    # 简化：主要根据水平距离匹配
+                    left_distance = abs(ver_lines_shu[j][0] - pairs[i][0])
+                    right_distance = abs(ver_lines_shu[j][0] - pairs[i][2])
+                    
+                    # 左引线匹配条件
+                    if left_distance < 50:  # 距离小于50像素
+                        # 检查Y方向是否有重叠或接近
+                        y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+                        y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+                        y_overlap = max(0, y_overlap_end - y_overlap_start)
+                        
+                        if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+                                                abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
+                            # 计算简化评分
+                            left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                            
+                            if left_score > 0:
+                                middle[0:4] = ver_lines_shu[j]
+                                middle[4] = left_distance  # 存储距离
+                                middle[5] = left_score  # 存储评分
+                                left_straight = np.r_[left_straight, [middle]]
+                                print(f"外向横pairs找到左竖线，距离: {left_distance}, 评分: {left_score}")
+                    
+                    # 右引线匹配条件
+                    if right_distance < 50:  # 距离小于50像素
+                        # 检查Y方向是否有重叠或接近
+                        y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+                        y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+                        y_overlap = max(0, y_overlap_end - y_overlap_start)
+                        
+                        if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+                                                abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
+                            # 计算简化评分
+                            right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                            
+                            if right_score > 0:
+                                middle[0:4] = ver_lines_shu[j]
+                                middle[4] = right_distance  # 存储距离
+                                middle[5] = right_score  # 存储评分
+                                right_straight = np.r_[right_straight, [middle]]
+                                print(f"外向横pairs找到右竖线，距离: {right_distance}, 评分: {right_score}")
+                
+                # 按距离从小到大排序（主要排序依据），距离相同再按评分排序
+                if len(left_straight) > 0:
+                    # 先按距离排序，距离小的在前
+                    left_straight = left_straight[np.argsort(left_straight[:, 4])]
+                    # 如果前几个距离相同，再按评分排序
+                    # 简单实现：取距离最小的几个，再按评分排序
+                    min_distance = left_straight[0, 4]
+                    same_distance_indices = np.where(left_straight[:, 4] <= min_distance + 1)[0]
+                    if len(same_distance_indices) > 1:
+                        # 对距离相同的部分按评分排序
+                        same_distance_lines = left_straight[same_distance_indices]
+                        same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
+                        left_straight[same_distance_indices] = same_distance_lines
+                
+                if len(right_straight) > 0:
+                    # 先按距离排序，距离小的在前
+                    right_straight = right_straight[np.argsort(right_straight[:, 4])]
+                    # 如果前几个距离相同，再按评分排序
+                    min_distance = right_straight[0, 4]
+                    same_distance_indices = np.where(right_straight[:, 4] <= min_distance + 1)[0]
+                    if len(same_distance_indices) > 1:
+                        # 对距离相同的部分按评分排序
+                        same_distance_lines = right_straight[same_distance_indices]
+                        same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
+                        right_straight[same_distance_indices] = same_distance_lines
+                
+                # 根据找到的引线数量处理
                 if len(left_straight) > 0 and len(right_straight) > 0:
-                    # 找到两条引线，直接使用
+                    # 找到两条引线，直接使用距离最小的
                     pairs_length_middle[0:4] = pairs[i, 0:4]
                     pairs_length_middle[4:8] = left_straight[0, 0:4]
                     pairs_length_middle[8:12] = right_straight[0, 0:4]
                     pairs_length_middle[12] = abs(left_straight[0, 0] - right_straight[0, 0])
                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
-                    print("找到两条引线，直接使用")
+                    print(f"找到两条引线，左距离: {left_straight[0, 4]}, 右距离: {right_straight[0, 4]}")
                 elif len(left_straight) > 0 or len(right_straight) > 0:
                     # 只找到一条引线，生成另一条
                     pairs_length_middle[0:4] = pairs[i, 0:4]
@@ -191,29 +624,16 @@ def find_pairs_length(img_path, pairs, test_mode):
                         pairs_length_middle[4:8] = left_straight[0, 0:4]
                         left_line = left_straight[0, 0:4]
                         
-                        # 计算左侧引线与箭头对的距离（有符号距离）
+                        # 计算左侧引线与箭头对的距离
                         left_distance = left_line[0] - pairs[i][0]
                         
-                        # 判断引线是在内侧还是外侧
-                        is_inside = left_distance > 0  # 如果距离为正，说明引线在箭头对右侧（内侧）
-                        
-                        # 根据引线位置生成右侧引线
-                        if is_inside:
-                            # 引线在内侧，右侧引线也在内侧
-                            right_line = [
-                                pairs[i][2] - abs(left_distance),  # x1 - 在内侧
-                                left_line[1],  # y1 - 保持与左侧引线相同的高度
-                                pairs[i][2] - abs(left_distance),  # x2 - 在内侧
-                                left_line[3]   # y2 - 保持与左侧引线相同的高度
-                            ]
-                        else:
-                            # 引线在外侧，右侧引线也在外侧
-                            right_line = [
-                                pairs[i][2] - abs(left_distance),  # x1 - 在外侧
-                                left_line[1],  # y1 - 保持与左侧引线相同的高度
-                                pairs[i][2] - abs(left_distance),  # x2 - 在外侧
-                                left_line[3]   # y2 - 保持与左侧引线相同的高度
-                            ]
+                        # 生成右侧引线（与左侧对称）
+                        right_line = [
+                            pairs[i][2] - abs(left_distance),  # 保持与左侧对称的距离
+                            left_line[1],  # y1 - 保持与左侧引线相同的高度
+                            pairs[i][2] - abs(left_distance),  # x2 - 保持与左侧对称的距离
+                            left_line[3]   # y2 - 保持与左侧引线相同的高度
+                        ]
                         pairs_length_middle[8:12] = right_line
                         print("根据左侧引线生成右侧引线")
                     
@@ -222,29 +642,16 @@ def find_pairs_length(img_path, pairs, test_mode):
                         pairs_length_middle[8:12] = right_straight[0, 0:4]
                         right_line = right_straight[0, 0:4]
                         
-                        # 计算右侧引线与箭头对的距离（有符号距离）
+                        # 计算右侧引线与箭头对的距离
                         right_distance = right_line[0] - pairs[i][2]
                         
-                        # 判断引线是在内侧还是外侧
-                        is_inside = right_distance < 0  # 如果距离为负，说明引线在箭头对左侧（内侧）
-                        
-                        # 根据引线位置生成左侧引线
-                        if is_inside:
-                            # 引线在内侧，左侧引线也在内侧
-                            left_line = [
-                                pairs[i][0] + abs(right_distance),  # x1 - 在内侧
-                                right_line[1],  # y1 - 保持与右侧引线相同的高度
-                                pairs[i][0] + abs(right_distance),  # x2 - 在内侧
-                                right_line[3]   # y2 - 保持与右侧引线相同的高度
-                            ]
-                        else:
-                            # 引线在外侧，左侧引线也在外侧
-                            left_line = [
-                                pairs[i][0] + abs(right_distance),  # x1 - 在外侧
-                                right_line[1],  # y1 - 保持与右侧引线相同的高度
-                                pairs[i][0] + abs(right_distance),  # x2 - 在外侧
-                                right_line[3]   # y2 - 保持与右侧引线相同的高度
-                            ]
+                        # 生成左侧引线（与右侧对称）
+                        left_line = [
+                            pairs[i][0] + abs(right_distance),  # 保持与右侧对称的距离
+                            right_line[1],  # y1 - 保持与右侧引线相同的高度
+                            pairs[i][0] + abs(right_distance),  # x2 - 保持与右侧对称的距离
+                            right_line[3]   # y2 - 保持与右侧引线相同的高度
+                        ]
                         pairs_length_middle[4:8] = left_line
                         print("根据右侧引线生成左侧引线")
                     
@@ -254,50 +661,48 @@ def find_pairs_length(img_path, pairs, test_mode):
                 else:
                     # 没有找到任何引线，不保存这个pairs
                     print("没有找到任何引线，跳过这个pairs")
-                    
+            
+            # 竖向标尺线的处理类似
             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
                 print("竖向")
-                up_straight = np.zeros((0, 5))  # 存储可能匹配的上侧直线，第五位是与标尺线上端点的距离
-                down_straight = np.zeros((0, 5))  # 存储可能匹配的下侧直线，第五位是与标尺线下端点的距离
+                up_straight = np.zeros((0, 5))
+                down_straight = np.zeros((0, 5))
                 middle = np.zeros((5))
+                
                 for j in range(len(ver_lines_heng)):
-                    # 1.找上端附近的直线，要求纵坐标在端点附近，横坐标穿过或者在标尺线附近
-                    if pairs[i][1] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][
-                        1] + ratio * (
-                            pairs[i][3] - pairs[i][1]):  # 纵坐标在端点附近
+                    # 上端附近的直线
+                    if pairs[i][1] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+                            pairs[i][3] - pairs[i][1]):
                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
-                                pairs[i][2] - pairs[i][0]):  # 两矩形在x坐标上的高有重叠或者距离近
+                                pairs[i][2] - pairs[i][0]):
                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
-                                    pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][
-                                2]):  # 要求竖pairs在图片左方时，匹配的直线在竖pairs右方
+                                    pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
                                 middle[0:4] = ver_lines_heng[j]
                                 middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
                                 up_straight = np.r_[up_straight, [middle]]
                                 print("外向竖pairs找到上横线")
 
-                    # 2.找下端附近的直线，要求纵坐标在端点附近，横坐标穿过或者在标尺线附近
-                    if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][
-                        3] + ratio * (
-                            pairs[i][3] - pairs[i][1]):  # 横坐标在端点附近
+                    # 下端附近的直线
+                    if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio * (
+                            pairs[i][3] - pairs[i][1]):
                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
-                                pairs[i][2] - pairs[i][0]):  # 两矩形在y坐标上的高有重叠或者距离近
+                                pairs[i][2] - pairs[i][0]):
                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
-                                    pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][
-                                2]):  # 要求竖pairs在图片左方时，匹配的直线在竖pairs右方
+                                    pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
                                 middle[0:4] = ver_lines_heng[j]
                                 middle[4] = abs(pairs[i][0] - ver_lines_heng[j][0])
                                 down_straight = np.r_[down_straight, [middle]]
                                 print("外向竖pairs找到下横线")
-                up_straight = up_straight[np.argsort(up_straight[:, 4])]  # 按距离从小到大排序
-                down_straight = down_straight[np.argsort(down_straight[:, 4])]  # 按距离从小到大排序
+                
+                up_straight = up_straight[np.argsort(up_straight[:, 4])]
+                down_straight = down_straight[np.argsort(down_straight[:, 4])]
                 
                 # 修改：根据找到的引线数量处理
                 if len(up_straight) > 0 and len(down_straight) > 0:
-                    # 找到两条引线，直接使用
                     pairs_length_middle[0:4] = pairs[i, 0:4]
                     pairs_length_middle[4:8] = up_straight[0, 0:4]
                     pairs_length_middle[8:12] = down_straight[0, 0:4]
@@ -305,123 +710,88 @@ def find_pairs_length(img_path, pairs, test_mode):
                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
                     print("找到两条引线，直接使用")
                 elif len(up_straight) > 0 or len(down_straight) > 0:
-                    # 只找到一条引线，生成另一条
                     pairs_length_middle[0:4] = pairs[i, 0:4]
                     
-                    # 如果找到上侧引线
                     if len(up_straight) > 0:
                         pairs_length_middle[4:8] = up_straight[0, 0:4]
                         up_line = up_straight[0, 0:4]
                         
-                        # 计算上侧引线与箭头对的距离（有符号距离）
                         up_distance = up_line[1] - pairs[i][1]
                         
-                        # 判断引线是在内侧还是外侧
-                        is_inside = up_distance > 0  # 如果距离为正，说明引线在箭头对下方（内侧）
-                        
-                        # 根据引线位置生成下侧引线
-                        if is_inside:
-                            # 引线在内侧，下侧引线也在内侧
-                            down_line = [
-                                up_line[0],  # x1 - 保持与上侧引线相同的水平位置
-                                pairs[i][3] - abs(up_distance),  # y1 - 在内侧
-                                up_line[2],  # x2 - 保持与上侧引线相同的水平位置
-                                pairs[i][3] - abs(up_distance)   # y2 - 在内侧
-                            ]
-                        else:
-                            # 引线在外侧，下侧引线也在外侧
-                            down_line = [
-                                up_line[0],  # x1 - 保持与上侧引线相同的水平位置
-                                pairs[i][3] - abs(up_distance),  # y1 - 在外侧
-                                up_line[2],  # x2 - 保持与上侧引线相同的水平位置
-                                pairs[i][3] - abs(up_distance)   # y2 - 在外侧
-                            ]
+                        # 生成下侧引线（与上侧对称）
+                        down_line = [
+                            up_line[0],
+                            pairs[i][3] - abs(up_distance),  # 保持与上侧对称的距离
+                            up_line[2],
+                            pairs[i][3] - abs(up_distance)
+                        ]
                         pairs_length_middle[8:12] = down_line
                         print("根据上侧引线生成下侧引线")
                     
-                    # 如果找到下侧引线
                     elif len(down_straight) > 0:
                         pairs_length_middle[8:12] = down_straight[0, 0:4]
                         down_line = down_straight[0, 0:4]
                         
-                        # 计算下侧引线与箭头对的距离（有符号距离）
                         down_distance = down_line[1] - pairs[i][3]
                         
-                        # 判断引线是在内侧还是外侧
-                        is_inside = down_distance < 0  # 如果距离为负，说明引线在箭头上方（内侧）
-                        
-                        # 根据引线位置生成上侧引线
-                        if is_inside:
-                            # 引线在内侧，上侧引线也在内侧
-                            up_line = [
-                                down_line[0],  # x1 - 保持与下侧引线相同的水平位置
-                                pairs[i][1] + abs(down_distance),  # y1 - 在内侧
-                                down_line[2],  # x2 - 保持与下侧引线相同的水平位置
-                                pairs[i][1] + abs(down_distance)   # y2 - 在内侧
-                            ]
-                        else:
-                            # 引线在外侧，上侧引线也在外侧
-                            up_line = [
-                                down_line[0],  # x1 - 保持与下侧引线相同的水平位置
-                                pairs[i][1] + abs(down_distance),  # y1 - 在外侧
-                                down_line[2],  # x2 - 保持与下侧引线相同的水平位置
-                                pairs[i][1] + abs(down_distance)   # y2 - 在外侧
-                            ]
+                        # 生成上侧引线（与下侧对称）
+                        up_line = [
+                            down_line[0],
+                            pairs[i][1] + abs(down_distance),  # 保持与下侧对称的距离
+                            down_line[2],
+                            pairs[i][1] + abs(down_distance)
+                        ]
                         pairs_length_middle[4:8] = up_line
                         print("根据下侧引线生成上侧引线")
                     
-                    # 计算距离
                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
                 else:
-                    # 没有找到任何引线，不保存这个pairs
                     print("没有找到任何引线，跳过这个pairs")
-                    
+        
+        # 内向标尺线的处理（保持原有逻辑）
         if pairs[i][4] == 1:  # 内向标尺线
-            # 内向标尺线的引线一定离yolox检测出的两端点有一定距离
             print("内向")
             ratio = 0.5
             ratio_inside = 0.15
+            
             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
                 print("横向")
-                left_straight = np.zeros((0, 5))  # 存储可能匹配的左侧直线，第五位是与标尺线左端点的距离
-                right_straight = np.zeros((0, 5))  # 存储可能匹配的右侧直线，第五位是与标尺线右端点的距离
+                left_straight = np.zeros((0, 5))
+                right_straight = np.zeros((0, 5))
                 middle = np.zeros((5))
+                
                 for j in range(len(ver_lines_shu)):
-                    # 1.找左端附近的直线，要求横坐标在端点附近，纵坐标穿过或者在标尺线附近
-                    if pairs[i][0] + ratio_inside * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][
-                        0] + ratio * (
-                            pairs[i][2] - pairs[i][0]):  # 直线横坐标在左端点右侧
+                    # 左端附近的直线
+                    if pairs[i][0] - ratio_inside * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][0] + ratio * (
+                            pairs[i][2] - pairs[i][0]):
                         if (not (pairs[i][1] > ver_lines_shu[j][3] or pairs[i][3] < ver_lines_shu[j][1])) or min(
                                 abs(pairs[i][1] - ver_lines_shu[j][3]), abs(pairs[i][3] - ver_lines_shu[j][1])) < ra * (
-                                pairs[i][3] - pairs[i][1]):  # 两矩形在y坐标上的高有重叠或者距离近
+                                pairs[i][3] - pairs[i][1]):
                             if (pairs[i][1] < heng and ver_lines_shu[j][3] > pairs[i][3]) or (
-                                    pairs[i][1] > heng and ver_lines_shu[j][1] < pairs[i][
-                                1]):  # 要求横pairs在图片上方时，匹配的直线在横pairs下方
+                                    pairs[i][1] > heng and ver_lines_shu[j][1] < pairs[i][1]):
                                 middle[0:4] = ver_lines_shu[j]
                                 middle[4] = abs(pairs[i][0] - ver_lines_shu[j][0])
                                 left_straight = np.r_[left_straight, [middle]]
                                 print("内向横pairs找到左竖线")
 
-                    # 2.找右端附近的直线，要求横坐标在端点附近，纵坐标穿过或者在标尺线附近
-                    if pairs[i][2] - ratio * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][
-                        2] - ratio_inside * (pairs[i][2] - pairs[i][0]):  # 横坐标在右端点左侧
+                    # 右端附近的直线
+                    if pairs[i][2] - ratio * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][2] + ratio_inside * (pairs[i][2] - pairs[i][0]):
                         if (not (pairs[i][1] > ver_lines_shu[j][3] or pairs[i][3] < ver_lines_shu[j][1])) or min(
                                 abs(pairs[i][1] - ver_lines_shu[j][3]), abs(pairs[i][3] - ver_lines_shu[j][1])) < ra * (
-                                pairs[i][3] - pairs[i][1]):  # 两矩形在y坐标上的高有重叠或者距离近
+                                pairs[i][3] - pairs[i][1]):
                             if (pairs[i][1] < heng and ver_lines_shu[j][3] > pairs[i][3]) or (
-                                    pairs[i][1] > heng and ver_lines_shu[j][1] < pairs[i][
-                                1]):  # 要求横pairs在图片上方时，匹配的直线在横pairs下方
+                                    pairs[i][1] > heng and ver_lines_shu[j][1] < pairs[i][1]):
                                 middle[0:4] = ver_lines_shu[j]
                                 middle[4] = abs(pairs[i][0] - ver_lines_shu[j][0])
                                 right_straight = np.r_[right_straight, [middle]]
                                 print("内向横pairs找到右竖线")
-                left_straight = left_straight[np.argsort(left_straight[:, 4])]  # 按距离从小到大排序
-                right_straight = right_straight[np.argsort(right_straight[:, 4])]  # 按距离从小到大排序
+                
+                left_straight = left_straight[np.argsort(left_straight[:, 4])]
+                right_straight = right_straight[np.argsort(right_straight[:, 4])]
                 
                 # 修改：根据找到的引线数量处理
                 if len(left_straight) > 0 and len(right_straight) > 0:
-                    # 找到两条引线，直接使用
                     pairs_length_middle[0:4] = pairs[i, 0:4]
                     pairs_length_middle[4:8] = left_straight[0, 0:4]
                     pairs_length_middle[8:12] = right_straight[0, 0:4]
@@ -429,97 +799,83 @@ def find_pairs_length(img_path, pairs, test_mode):
                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
                     print("找到两条引线，直接使用")
                 elif len(left_straight) > 0 or len(right_straight) > 0:
-                    # 只找到一条引线，生成另一条
                     pairs_length_middle[0:4] = pairs[i, 0:4]
                     
-                    # 如果找到左侧引线
                     if len(left_straight) > 0:
                         pairs_length_middle[4:8] = left_straight[0, 0:4]
                         left_line = left_straight[0, 0:4]
                         
-                        # 计算左侧引线与箭头对的距离（有符号距离）
                         left_distance = left_line[0] - pairs[i][0]
                         
-                        # 对于内向标尺线，引线应该在箭头对内侧
-                        # 生成右侧引线（在内侧）
                         right_line = [
-                            pairs[i][2] - abs(left_distance),  # x1 - 在内侧
-                            left_line[1],  # y1 - 保持与左侧引线相同的高度
-                            pairs[i][2] - abs(left_distance),  # x2 - 在内侧
-                            left_line[3]   # y2 - 保持与左侧引线相同的高度
+                            pairs[i][2] - abs(left_distance),
+                            left_line[1],
+                            pairs[i][2] - abs(left_distance),
+                            left_line[3]
                         ]
                         pairs_length_middle[8:12] = right_line
                         print("根据左侧引线生成右侧引线（内向）")
                     
-                    # 如果找到右侧引线
                     elif len(right_straight) > 0:
                         pairs_length_middle[8:12] = right_straight[0, 0:4]
                         right_line = right_straight[0, 0:4]
                         
-                        # 计算右侧引线与箭头对的距离（有符号距离）
                         right_distance = right_line[0] - pairs[i][2]
                         
-                        # 对于内向标尺线，引线应该在箭头对内侧
-                        # 生成左侧引线（在内侧）
                         left_line = [
-                            pairs[i][0] + abs(right_distance),  # x1 - 在内侧
-                            right_line[1],  # y1 - 保持与右侧引线相同的高度
-                            pairs[i][0] + abs(right_distance),  # x2 - 在内侧
-                            right_line[3]   # y2 - 保持与右侧引线相同的高度
+                            pairs[i][0] + abs(right_distance),
+                            right_line[1],
+                            pairs[i][0] + abs(right_distance),
+                            right_line[3]
                         ]
                         pairs_length_middle[4:8] = left_line
                         print("根据右侧引线生成左侧引线（内向）")
                     
-                    # 计算距离
                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
                 else:
-                    # 没有找到任何引线，不保存这个pairs
                     print("没有找到任何引线，跳过这个pairs（内向）")
-                    
+            
             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
                 print("竖向")
-                up_straight = np.zeros((0, 5))  # 存储可能匹配的上侧直线，第五位是与标尺线上端点的距离
-                down_straight = np.zeros((0, 5))  # 存储可能匹配的下侧直线，第五位是与标尺线下端点的距离
+                up_straight = np.zeros((0, 5))
+                down_straight = np.zeros((0, 5))
                 middle = np.zeros((5))
+                
                 for j in range(len(ver_lines_heng)):
-                    # 1.找上端附近的直线，要求纵坐标在端点附近，横坐标穿过或者在标尺线附近
-                    if pairs[i][1] + ratio_inside * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][
-                        1] + ratio * (
-                            pairs[i][3] - pairs[i][1]):  # 纵坐标在上端点下侧
+                    # 上端附近的直线
+                    if pairs[i][1] + ratio_inside * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+                            pairs[i][3] - pairs[i][1]):
                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
-                                pairs[i][2] - pairs[i][0]):  # 两矩形在x坐标上的高有重叠或者距离近
+                                pairs[i][2] - pairs[i][0]):
                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
-                                    pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][
-                                2]):  # 要求竖pairs在图片左方时，匹配的直线在竖pairs右方
+                                    pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
                                 middle[0:4] = ver_lines_heng[j]
                                 middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
                                 up_straight = np.r_[up_straight, [middle]]
                                 print("内向竖pairs找到上横线")
 
-                    # 2.找下端附近的直线，要求纵坐标在端点附近，横坐标穿过或者在标尺线附近
-                    if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][
-                        3] - ratio_inside * (
-                            pairs[i][3] - pairs[i][1]):  # 纵坐标在下端点上侧
+                    # 下端附近的直线
+                    if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] - ratio_inside * (
+                            pairs[i][3] - pairs[i][1]):
                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
-                                pairs[i][2] - pairs[i][0]):  # 两矩形在y坐标上的高有重叠或者距离近
+                                pairs[i][2] - pairs[i][0]):
                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
-                                    pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][
-                                2]):  # 要求竖pairs在图片左方时，匹配的直线在竖pairs右方
+                                    pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
                                 middle[0:4] = ver_lines_heng[j]
                                 middle[4] = abs(pairs[i][0] - ver_lines_heng[j][0])
                                 down_straight = np.r_[down_straight, [middle]]
                                 print("内向竖pairs找到下横线")
-                up_straight = up_straight[np.argsort(up_straight[:, 4])]  # 按距离从小到大排序
-                down_straight = down_straight[np.argsort(down_straight[:, 4])]  # 按距离从小到大排序
+                
+                up_straight = up_straight[np.argsort(up_straight[:, 4])]
+                down_straight = down_straight[np.argsort(down_straight[:, 4])]
                 
                 # 修改：根据找到的引线数量处理
                 if len(up_straight) > 0 and len(down_straight) > 0:
-                    # 找到两条引线，直接使用
                     pairs_length_middle[0:4] = pairs[i, 0:4]
                     pairs_length_middle[4:8] = up_straight[0, 0:4]
                     pairs_length_middle[8:12] = down_straight[0, 0:4]
@@ -527,55 +883,46 @@ def find_pairs_length(img_path, pairs, test_mode):
                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
                     print("找到两条引线，直接使用")
                 elif len(up_straight) > 0 or len(down_straight) > 0:
-                    # 只找到一条引线，生成另一条
                     pairs_length_middle[0:4] = pairs[i, 0:4]
                     
-                    # 如果找到上侧引线
                     if len(up_straight) > 0:
                         pairs_length_middle[4:8] = up_straight[0, 0:4]
                         up_line = up_straight[0, 0:4]
                         
-                        # 计算上侧引线与箭头对的距离（有符号距离）
                         up_distance = up_line[1] - pairs[i][1]
                         
-                        # 对于内向标尺线，引线应该在箭头对内侧
-                        # 生成下侧引线（在内侧）
                         down_line = [
-                            up_line[0],  # x1 - 保持与上侧引线相同的水平位置
-                            pairs[i][3] - abs(up_distance),  # y1 - 在内侧
-                            up_line[2],  # x2 - 保持与上侧引线相同的水平位置
-                            pairs[i][3] - abs(up_distance)   # y2 - 在内侧
+                            up_line[0],
+                            pairs[i][3] - abs(up_distance),
+                            up_line[2],
+                            pairs[i][3] - abs(up_distance)
                         ]
                         pairs_length_middle[8:12] = down_line
                         print("根据上侧引线生成下侧引线（内向）")
                     
-                    # 如果找到下侧引线
                     elif len(down_straight) > 0:
                         pairs_length_middle[8:12] = down_straight[0, 0:4]
                         down_line = down_straight[0, 0:4]
                         
-                        # 计算下侧引线与箭头对的距离（有符号距离）
                         down_distance = down_line[1] - pairs[i][3]
                         
-                        # 对于内向标尺线，引线应该在箭头对内侧
-                        # 生成上侧引线（在内侧）
                         up_line = [
-                            down_line[0],  # x1 - 保持与下侧引线相同的水平位置
-                            pairs[i][1] + abs(down_distance),  # y1 - 在内侧
-                            down_line[2],  # x2 - 保持与下侧引线相同的水平位置
-                            pairs[i][1] + abs(down_distance)   # y2 - 在内侧
+                            down_line[0],
+                            pairs[i][1] + abs(down_distance),
+                            down_line[2],
+                            pairs[i][1] + abs(down_distance)
                         ]
                         pairs_length_middle[4:8] = up_line
                         print("根据下侧引线生成上侧引线（内向）")
                     
-                    # 计算距离
                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
                 else:
-                    # 没有找到任何引线，不保存这个pairs
                     print("没有找到任何引线，跳过这个pairs（内向）")
-                    
+        
         print("一组pairs结束*")
+    
+    # 可视化部分保持不变
     if test_mode == 1:
         drawn_img = cv2.imread(img_path)
         for i in range(len(pairs_length)):
@@ -590,19 +937,18 @@ def find_pairs_length(img_path, pairs, test_mode):
             y2 = int(pairs_length[i][11])
             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
         for i in range(len(pairs_length)):
-            # 绘制一个红色矩形
             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
-            point_color = (0, 0, 255)  # BGR
+            point_color = (0, 0, 255)
             thickness = 2
             lineType = 8
             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
-        # Show image
         cv2.namedWindow("LSD", 0)
         cv2.imshow("LSD", drawn_img)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
         print("视图结束**")
+    
     try:
         drawn_img = cv2.imread(img_path)
         for i in range(len(pairs_length)):
@@ -617,26 +963,22 @@ def find_pairs_length(img_path, pairs, test_mode):
             y2 = int(pairs_length[i][11])
             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
         for i in range(len(pairs_length)):
-            # 绘制一个红色矩形
             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
-            point_color = (0, 0, 255)  # BGR
+            point_color = (0, 0, 255)
             thickness = 2
             lineType = 8
             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
-        # 保存图片
         path = fr'{OPENCV_OUTPUT_LINE}/' + img_path[-7:]
         cv2.imwrite(path, drawn_img)
         print("保存引线+标尺线组合成功:", path)
     except:
         print("保存引线+标尺线组合失败")
+    
     print("***/结束引线和标尺线的匹配/***")
-
-    # 去除重复的引线组合
     pairs_length = remove_duplicate_pairs(pairs_length)
-
-    return pairs_length  # np.二维数组（，13）[pairs_x1_y1_x2_y2,引线1_x1_y1_x2_y2,引线2_x1_y1_x2_y2,两引线距离]
-
+    pairs_length = remove_contained_arrows(pairs_length)
+    return pairs_length
 
 def remove_duplicate_pairs(pairs_length):
     """
@@ -858,41 +1200,6 @@ def SVTR(top_dbnet_data_all, bottom_dbnet_data_all, side_dbnet_data, detailed_db
 
     return start1, end, results['top'], results['bottom'], results['side'], results['detailed']
 
-#1202优化之前
-# def SVTR(top_dbnet_data_all, bottom_dbnet_data_all, side_dbnet_data, detailed_dbnet_data):
-#     print("---开始各个视图的SVTR识别---")
-#     empty_data = []
-#     start1 = time.time()
-#
-#     path = f"{DATA}/top.jpg"
-#     if not os.path.exists(path):
-#         top_ocr_data = empty_data
-#     else:
-#         top_ocr_data = ocr_data(path, top_dbnet_data_all)
-#
-#     path = f"{DATA}/bottom.jpg"
-#     if not os.path.exists(path):
-#             bottom_ocr_data = empty_data
-#     else:
-#         bottom_ocr_data = ocr_data(path, bottom_dbnet_data_all)
-#
-#     path = f"{DATA}/side.jpg"
-#     if not os.path.exists(path):
-#             side_ocr_data = empty_data
-#     else:
-#         side_ocr_data = ocr_data(path, side_dbnet_data)
-#
-#     path = f"{DATA}/detailed.jpg"
-#     if not os.path.exists(path):
-#                 detailed_ocr_data = empty_data
-#     else:
-#         detailed_ocr_data = ocr_data(path, detailed_dbnet_data)
-#
-#     print("---结束各个视图的SVTR识别---")
-#     end = time.time()
-#     return start1, end, top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data
-
-#1201优化后版本
 class OCRDataProcessor:
     def __init__(self):
         # 预编译正则，提高效率
@@ -936,7 +1243,7 @@ class OCRDataProcessor:
             if self.re_single_char.match(text):
                 text = self.re_single_char.sub('', text)
 
-            text = text.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1').replace('B', '8')
+            text = text.replace('O', '0').replace('o', '0').replace('±-','+-').replace('.00','')
 
             # 更新清洗后的文本
             item['ocr_strings'] = text.strip()
@@ -1044,8 +1351,13 @@ def data_wrangling_optimized(key, top_dbnet_data, bottom_dbnet_data, side_dbnet_
     side_ocr_data = processor.process_pipeline(side_ocr_data)
     detailed_ocr_data = processor.process_pipeline(detailed_ocr_data)
 
-    print("经过预处理和初步提取后的结果 (TOP):\n", *top_ocr_data, sep='\n')
+    tee_print("经过预处理和初步提取后的结果 (TOP):\n", *top_ocr_data, sep='\n')
+    tee_print("经过预处理得到的bottom视图的SVTR结果:\n", *bottom_ocr_data, sep='\n')
+    tee_print("经过预处理得到的side视图的SVTR结果:\n", *side_ocr_data, sep='\n')
+    tee_print("经过预处理得到的detailed视图的SVTR结果:\n", *detailed_ocr_data, sep='\n')
 
+    
+    print(f'side_yolox_num调试{side_yolox_num}')
     # 3. 数据绑定 (Bind Data - Logic remains external as it involves geometry)
     top_ocr_data = bind_data(top_yolox_num, top_ocr_data)
     bottom_ocr_data = bind_data(bottom_yolox_num, bottom_ocr_data)
@@ -1077,6 +1389,11 @@ def data_wrangling_optimized(key, top_dbnet_data, bottom_dbnet_data, side_dbnet_
 
     # ... 后续的 BGA_side_filter 和 display 逻辑保持不变 ...
     side_ocr_data = BGA_side_filter(side_ocr_data)
+
+    tee_print("经过处理后的结果 (TOP):\n", *top_ocr_data, sep='\n')
+    tee_print("经过处理的bottom视图的SVTR结果:\n", *bottom_ocr_data, sep='\n')
+    tee_print("经过处理的side视图的SVTR结果:\n", *side_ocr_data, sep='\n')
+    tee_print("经过处理的detailed视图的SVTR结果:\n", *detailed_ocr_data, sep='\n')
 
     return top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data
 #1201优化之前
@@ -1164,10 +1481,10 @@ def data_wrangling(key, top_dbnet_data, bottom_dbnet_data, side_dbnet_data, deta
     side_ocr_data = filter_ocr_data__1(side_ocr_data)
     detailed_ocr_data = filter_ocr_data__1(detailed_ocr_data)
 
-    print("经过第一步后处理得到的top视图的SVTR结果:\n", *top_ocr_data, sep='\n')
-    print("经过第一步后处理得到的bottom视图的SVTR结果:\n", *bottom_ocr_data, sep='\n')
-    print("经过第一步后处理得到的side视图的SVTR结果:\n", *side_ocr_data, sep='\n')
-    print("经过第一步后处理得到的detailed视图的SVTR结果:\n", *detailed_ocr_data, sep='\n')
+    tee_print("经过第一步后处理得到的top视图的SVTR结果:\n", *top_ocr_data, sep='\n')
+    tee_print("经过第一步后处理得到的bottom视图的SVTR结果:\n", *bottom_ocr_data, sep='\n')
+    tee_print("经过第一步后处理得到的side视图的SVTR结果:\n", *side_ocr_data, sep='\n')
+    tee_print("经过第一步后处理得到的detailed视图的SVTR结果:\n", *detailed_ocr_data, sep='\n')
 
     # 6.1.1借助yolox将dbnet标注的框线坐标以及ocr内容合并
     top_ocr_data = bind_data(top_yolox_num, top_ocr_data)
@@ -1195,7 +1512,7 @@ def data_wrangling(key, top_dbnet_data, bottom_dbnet_data, side_dbnet_data, deta
     bottom_ocr_data = cal_max_medium_min_bottom(bottom_ocr_data)
     side_ocr_data = cal_max_medium_min_side(side_ocr_data)
     detailed_ocr_data = cal_max_medium_min_side(detailed_ocr_data)
-
+    # 0111注释（方便测试）
     print("经过第二步后处理（yolox）得到的top视图的SVTR结果:\n", *top_ocr_data, sep='\n')
     print("经过第二步后处理（yolox）得到的bottom视图的SVTR结果:\n", *bottom_ocr_data, sep='\n')
     print("经过第二步后处理（yolox）得到的side视图的SVTR结果:\n", *side_ocr_data, sep='\n')
@@ -1530,10 +1847,10 @@ def MPD(key, top_yolox_pairs, bottom_yolox_pairs, side_yolox_pairs, detailed_yol
     img_path = f"{DATA}/side.jpg"
     if not os.path.exists(img_path):
         side_ocr_data = empty_list
-    else:
-        side_border = np.zeros((1, 4))
-        side_ocr_data = match_pairs_data(img_path, side_yolox_pairs, side_ocr_data, side_border)
-        side_ocr_data = match_pairs_data_angle(img_path, side_angle_pairs, side_ocr_data, side_border)
+    # else:
+    #     side_border = np.zeros((1, 4))
+    #     side_ocr_data = match_pairs_data(img_path, side_yolox_pairs, side_ocr_data, side_border)
+    #     side_ocr_data = match_pairs_data_angle(img_path, side_angle_pairs, side_ocr_data, side_border)
     print("side_pairs_data\n", side_ocr_data)
     if key == 1:
         print("展示side匹配的尺寸线和标注")
@@ -1561,10 +1878,11 @@ def get_better_data_2(top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr
     bottom_ocr_data = get_pairs_info(bottom_ocr_data, bottom_yolox_pairs_copy)
     side_ocr_data = get_pairs_info(side_ocr_data, side_yolox_pairs_copy)
     detailed_ocr_data = get_pairs_info(detailed_ocr_data, detailed_yolox_pairs_copy)
-    print("经过第三步后处理（opencv）得到的top视图的SVTR结果:\n", *top_ocr_data, sep='\n')
-    print("经过第三步后处理（opencv）得到的bottom视图的SVTR结果:\n", *bottom_ocr_data, sep='\n')
-    print("经过第三步后处理（opencv）得到的side视图的SVTR结果:\n", *side_ocr_data, sep='\n')
-    print("经过第三步后处理（opencv）得到的detailed视图的SVTR结果:\n", *detailed_ocr_data, sep='\n')
+    # 0111注释（方便测试）
+    tee_print("经过第三步后处理（opencv）得到的top视图的SVTR结果:\n", *top_ocr_data, sep='\n')
+    tee_print("经过第三步后处理（opencv）得到的bottom视图的SVTR结果:\n", *bottom_ocr_data, sep='\n')
+    tee_print("经过第三步后处理（opencv）得到的side视图的SVTR结果:\n", *side_ocr_data, sep='\n')
+    tee_print("经过第三步后处理（opencv）得到的detailed视图的SVTR结果:\n", *detailed_ocr_data, sep='\n')
     # yolox_pairs_top,np.二维数组（，11）[pairs_x1_y1_x2_y2,标注x1_y1_x2_y2，max,medium,min]
     # top_yolox_pairs_length,np.二维数组（，13）[pairs_x1_y1_x2_y2,引线1_x1_y1_x2_y2,引线2_x1_y1_x2_y2,两引线距离]
     yolox_pairs_top = io_1(top_ocr_data)
@@ -2210,9 +2528,24 @@ def cal_max_medium_min_top(ocr_data):
     '''
     根据key_info计算出max-medium_min
     '''
-
     # 排查是否存在'Φ'
     for i in range(len(ocr_data)):
+        # === [新增开始] ===
+        key_info_list = ocr_data[i]['key_info']
+        found_eq = False
+        for sublist in key_info_list:
+            if '=' in sublist:
+                try:
+                    eq_idx = sublist.index('=')
+                    if eq_idx + 1 < len(sublist):
+                        val = float(sublist[eq_idx + 1])
+                        ocr_data[i]['max_medium_min'] = np.array([val, val, val])
+                        found_eq = True
+                        break
+                except:
+                    pass
+        if found_eq: continue
+
         ed = 0
         num = 0
         list = ocr_data[i]['key_info']
@@ -2304,6 +2637,10 @@ def cal_max_medium_min_bottom(ocr_data):
     '''
     根据key_info计算出max-medium_min
     '''
+    # 排查是否存在'Φ'
+    # for i in range(len(ocr_data)):
+    #     if np.array(ocr_data[i]['key_info']).ndim == 1:
+    #         ocr_data[i]['key_info'] = [ocr_data[i]['key_info']]
     for i in range(len(ocr_data)):
         # === [新增开始] ===
         key_info_list = ocr_data[i]['key_info']
@@ -2321,11 +2658,6 @@ def cal_max_medium_min_bottom(ocr_data):
                     pass
         if found_eq: continue
 
-    # 排查是否存在'Φ'
-    # for i in range(len(ocr_data)):
-    #     if np.array(ocr_data[i]['key_info']).ndim == 1:
-    #         ocr_data[i]['key_info'] = [ocr_data[i]['key_info']]
-    for i in range(len(ocr_data)):
         num = 0
         ed = 0
         list = ocr_data[i]['key_info']
@@ -2418,7 +2750,6 @@ def cal_max_medium_min_side(ocr_data):
     根据key_info计算出max-medium_min
     '''
     # 排查是否存在唯一'max'
-
     for i in range(len(ocr_data)):
         max_num = 0
         no_acc = -1
@@ -2431,6 +2762,22 @@ def cal_max_medium_min_side(ocr_data):
 
     # 排查是否存在'Φ'
     for i in range(len(ocr_data)):
+        # === [新增开始] ===
+        key_info_list = ocr_data[i]['key_info']
+        found_eq = False
+        for sublist in key_info_list:
+            if '=' in sublist:
+                try:
+                    eq_idx = sublist.index('=')
+                    if eq_idx + 1 < len(sublist):
+                        val = float(sublist[eq_idx + 1])
+                        ocr_data[i]['max_medium_min'] = np.array([val, val, val])
+                        found_eq = True
+                        break
+                except:
+                    pass
+        if found_eq: continue
+
         num = 0
         ed = 0
         list = ocr_data[i]['key_info']
@@ -2719,6 +3066,7 @@ def show_ocr_result(img_path, ocr):
             ocr[i]['max_medium_min'] = str_list
     return ocr
 
+
 def io_1(ocr_data):
     '''
     # yolox_pairs_top,np.二维数组（，11）[pairs_x1_y1_x2_y2,标注x1_y1_x2_y2，max,medium,min]
@@ -2726,10 +3074,15 @@ def io_1(ocr_data):
     result = np.zeros((0, 11))
     for i in range(len(ocr_data)):
         mid = np.zeros((11))
-        if ocr_data[i]['matched_pairs_location'] != []:
-            mid[0: 4] = ocr_data[i]['matched_pairs_location']
+        # 获取 location 数据
+        loc = ocr_data[i].get('matched_pairs_location')
+
+        if loc is not None and len(loc) > 0:
+            # 无论 loc 是 4 位还是 13 位，只取前 4 位 (x1, y1, x2, y2)
+            mid[0: 4] = np.array(loc)[:4]
         else:
             mid[0: 4] = np.array([0, 0, 0, 0])
+
         mid[4: 8] = ocr_data[i]['location']
         if ocr_data[i]['max_medium_min'] != []:
             mid[8: 11] = ocr_data[i]['max_medium_min']
@@ -2757,9 +3110,13 @@ def get_yinxian_info(ocr_data, yolox_pairs_length):
     '''
     for i in range(len(yolox_pairs_length)):
         for j in range(len(ocr_data)):
-            if ocr_data[j]['matched_pairs_location'] != []:
-                if (yolox_pairs_length[i][0: 4] == ocr_data[j]['matched_pairs_location']).all():
-                    ocr_data[j]['matched_pairs_yinXian'] = yolox_pairs_length[4: 12]
+            loc = ocr_data[j].get('matched_pairs_location')
+
+            if loc is not None and len(loc) > 0:
+                loc_coords = np.array(loc)[:4]
+                if np.array_equal(yolox_pairs_length[i][0: 4], loc_coords):
+                    ocr_data[j]['matched_pairs_yinXian'] = yolox_pairs_length[i][4: 12]
+
     return ocr_data
 
 def Divide_regions_ocr(ocr, border):
@@ -2900,7 +3257,14 @@ def match_pairs_data(img_path, pairs, ocr, border):  # pairs[[0,1,2,3],[0,1,2,3]
     new_pairs = np.zeros((0, 4))
     for i in range(len(pairs)):
         if matched_pairs[i] == 0:
-            new_pairs = np.r_[new_pairs, [pairs[i]]]
+            current_item = np.array(pairs[i])
+            # 2. 强制截断为4列（不管原长度是多少，只保留前4列）
+            current_item_truncated = current_item[:4]  # 核心：把5列砍成4列
+            # ========== 预处理结束 ==========
+            
+            # 3. 用截断后的数组拼接（替换原来的 [pairs[i]]）
+            new_pairs = np.r_[new_pairs, [current_item_truncated]]
+            
             if divide_key == 1:
                 new_pairs_region.append(pairs_region[i])
     # 2.针对没有重叠的pairs，（1）横向pair只能匹配横向data（2）竖向pair可能匹配横向或者竖向data
@@ -3296,11 +3660,15 @@ def match_pairs_data(img_path, pairs, ocr, border):  # pairs[[0,1,2,3],[0,1,2,3]
         if i == 0:
             result.append(matched_ocr[i])
             continue
-        bool = True
+
+        is_duplicate = False
         for j in range(len(result)):
-            if operator.eq(matched_ocr[i]['location'], result[j]['location']).all():
-                bool = False
-        if bool:
+            # 使用 np.array_equal 替代直接的 == 比较
+            if np.array_equal(matched_ocr[i]['location'], result[j]['location']):
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
             result.append(matched_ocr[i])
     print("---结束视图的标注和标尺线的匹配---")
     return result
@@ -3671,91 +4039,98 @@ def match_pairs_data_angle(img_path, pairs, ocr, border):  # pairs[[0,1,2,3],[0,
     new_ocr = new_new_data
     # print('***', new_ocr)
     # 5.剩余标尺线按欧式距离匹配
-    # from math import sqrt
-    right_matched_pairs = []
-    x = len(new_pairs)
-    while_count = 0
-    while len(right_matched_pairs) != x and len(new_ocr) != 0 and len(new_pairs) != 0:
-        matched_pairs = np.zeros((len(new_pairs)))
+    # from math import sqrt # 确保前面导入了 sqrt
+    print("---进入欧氏距离匹配循环---")  # 调试打印
+
+    # 移除原本无用的 x 和 right_matched_pairs 逻辑
+    # 只要还有剩下的 pair 和 data，且还能匹配到新的，就继续
+    while len(new_ocr) > 0 and len(new_pairs) > 0:
+
+        matched_pairs = np.full((len(new_pairs)), -1)  # 初始化为 -1
         matched_pairs_len = np.zeros((len(new_pairs)))
-        matched_pairs[:] = -1  # 存储匹配到的data在new_data中的序号
+
         # 5.1.将所有pairs按照最近data匹配，记录匹配data序号和距离
+        has_new_match = False  # 标记本轮是否有新匹配
+
         for i in range(len(new_pairs)):
             min_lenth = 99999
             min_no = -1
             for j in range(len(new_ocr)):
-                if new_ocr[j]['Absolutely'] == 'angle':
-                    lenth = sqrt(
-                        (((new_pairs[i][2] + new_pairs[i][0]) * 0.5) - (
-                                new_ocr[j]['location'][2] + new_ocr[j]['location'][0]) * 0.5) ** 2 + (
-                                ((new_pairs[i][3] + new_pairs[i][1]) * 0.5) - (
-                                new_ocr[j]['location'][3] + new_ocr[j]['location'][1]) * 0.5) ** 2)
-                    if lenth < min_lenth:
-                        min_lenth = lenth
-                        min_no = j
+                # 计算中心点距离
+                pair_cx = (new_pairs[i][2] + new_pairs[i][0]) * 0.5
+                pair_cy = (new_pairs[i][3] + new_pairs[i][1]) * 0.5
+                ocr_cx = (new_ocr[j]['location'][2] + new_ocr[j]['location'][0]) * 0.5
+                ocr_cy = (new_ocr[j]['location'][3] + new_ocr[j]['location'][1]) * 0.5
+
+                lenth = sqrt((pair_cx - ocr_cx) ** 2 + (pair_cy - ocr_cy) ** 2)
+
+                if lenth < min_lenth:
+                    min_lenth = lenth
+                    min_no = j
+
             if min_no != -1 and min_lenth < max_length:
                 matched_pairs[i] = min_no
                 matched_pairs_len[i] = min_lenth
-        # 5.2.将相同匹配的pairs中距离大的项清零
+
+        # 5.2.冲突解决：将相同匹配的pairs中距离大的项清零
+        # (这部分逻辑保留你的原意，但在Python中如果matched_pairs[i]为-1需要跳过)
         for i in range(len(matched_pairs)):
             if matched_pairs[i] != -1:
                 for j in range(len(matched_pairs)):
-                    if matched_pairs[j] != -1:
-                        if i != j and matched_pairs[i] == matched_pairs[j]:
+                    if i != j and matched_pairs[j] != -1:
+                        if matched_pairs[i] == matched_pairs[j]:
                             if matched_pairs_len[i] > matched_pairs_len[j]:
                                 matched_pairs[i] = -1
                                 matched_pairs_len[i] = 0
                             else:
                                 matched_pairs[j] = -1
                                 matched_pairs_len[j] = 0
-        # 5.3.将未匹配的data和pairs分离重复1 2 3直到
+
+        # === 【关键修改点 1】: 将匹配成功的放入结果集 ===
+        for i in range(len(new_pairs)):
+            if matched_pairs[i] != -1:
+                idx = int(matched_pairs[i])
+                matched_item = new_ocr[idx]
+                matched_item['matched_pairs_location'] = new_pairs[i]
+                matched_ocr.append(matched_item)  # 加入结果列表
+                print(f"欧氏距离匹配成功: {matched_item['ocr_strings']}")  # 调试打印
+                has_new_match = True
+
+        # === 【关键修改点 2】: 准备下一轮的剩余数据 ===
         no_matched_pairs = np.zeros((0, 4))
         no_matched_data = []
+
+        # 筛选未匹配的 Pairs
         for i in range(len(new_pairs)):
             if matched_pairs[i] == -1:
                 no_matched_pairs = np.r_[no_matched_pairs, [new_pairs[i]]]
+
+        # 筛选未匹配的 Data (注意：这里要排除掉本轮 matched_pairs 中所有的索引)
+        matched_indices = set(matched_pairs)  # 这一轮被匹配掉的 data 索引集合
         for i in range(len(new_ocr)):
-            if i not in matched_pairs:
+            if i not in matched_indices:
                 no_matched_data.append(new_ocr[i])
 
-        middle = np.zeros((11))
-        for i in range(len(new_pairs)):
-            if matched_pairs[i] != -1:
-                new_ocr[int(matched_pairs[i])]['matched_pairs_location'] = new_pairs[i]
-                right_matched_pairs.append(new_ocr[int(matched_pairs[i])])
+        # === 【关键修改点 3】: 更新循环变量，通过判断是否有进展来防止死循环 ===
+        if not has_new_match:
+            print("本轮无新匹配，跳出循环")
+            break
+
+        # 更新变量以进入下一轮
         new_pairs = no_matched_pairs
         new_ocr = no_matched_data
-        # 限定循环次数，防止死循环（不保证所有标尺线会匹配到标注）
-        while_count += 1
-        if while_count == 3:
-            break
-    # 5.4将剩余data添加pairs为空传到最后结果
-    if len(new_ocr) != 0:
-        for i in range(len(new_ocr)):
-            right_matched_pairs.append(new_ocr[i])
-    # 5.5将剩余pairs添加data为空传到最后结果
-    # middle = np.zeros((11))
-    # if len(new_pairs) != 0:
-    #     for i in range(len(new_pairs)):
-    #         middle[0: 4] = new_pairs[i]
-    #         middle[4: 11] = np.array([0, 0, 0, 0, 0, 0, 0])
-    #         right_matched_pairs = np.r_[right_matched_pairs, [middle]]
-    # 输出匹配
-    for i in range(len(right_matched_pairs)):
-        matched_ocr.append(right_matched_pairs[i])
 
+        # 如果更新后列表为空，自然也会在下一次 while 判断时退出
+
+    # 去重 (保留你原来的逻辑)
     result = []
-    for i in range(len(matched_ocr)):
-        if i == 0:
-            result.append(matched_ocr[i])
-            continue
-        bool = True
-        for j in range(len(result)):
-            if operator.eq(matched_ocr[i]['location'], result[j]['location']).all():
-                bool = False
-        if bool:
-            result.append(matched_ocr[i])
-    print("---结束视图的标注和标尺线的匹配---")
+    seen = set()
+    for item in matched_ocr:
+        # 处理 ndarray不可哈希的问题
+        loc_key = item['location'].tobytes() if isinstance(item['location'], np.ndarray) else str(item['location'])
+        if loc_key not in seen:
+            result.append(item)
+            seen.add(loc_key)
     return result
 
 def show_matched_pairs_data(img_path, pairs_data):
@@ -3997,7 +4372,7 @@ def convert_Dic(dbnet_data, ocr_data):
 
     new_ocr_data = []
     min_len = min(len(dbnet_data), len(ocr_data))
-    for i in range(len(min_len)):
+    for i in range(min_len):
         dic = {'location': dbnet_data[i],
                'ocr_strings': ocr_data[i],
                'key_info': [],
@@ -4278,7 +4653,7 @@ def get_serial(top_serial_numbers_data, bottom_serial_numbers_data):
     print('nx', max_nx, 'ny', max_ny)
     return max_nx, max_ny
 
-def get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data, body_x, body_y):
+def get_BGA_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detailed_ocr_data, body_x, body_y):
     '''
     D/E 10~35
     D1/E1
@@ -4286,6 +4661,7 @@ def get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
     A
     A1
     e
+    Φ
     b
     θ
     L
@@ -4300,6 +4676,18 @@ def get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
     D_min = 8.75
     E_max = D_max
     E_min = D_min
+
+    # ===== 12.22新增：Φ（pin_diameter）=====
+    dic_phi = {'parameter_name': 'Φ', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
+    phi_max = 0.8
+    phi_min = 0.4
+
+    # ===== 12.22新增：把 Φ 放到末尾（不影响原有索引）=====
+
+    # index = len(QFP_parameter_list)-1 = 19
+    phi_idx = len(QFP_parameter_list) - 1
+    # ==============================================
+    # ================================
 
     dic_D1 = {'parameter_name': 'D1', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
     dic_E1 = {'parameter_name': 'E1', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
@@ -4342,13 +4730,13 @@ def get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
 
     dic_A = {'parameter_name': 'A', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
     A_max = 4.5
-    A_min = 1.1
+    A_min = 1.0
     dic_A1 = {'parameter_name': 'A1', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
-    A1_max = 0.3
+    A1_max = 0.4
     A1_min = 0
     dic_e = {'parameter_name': 'e', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
     e_max = 1.3
-    e_min = 0.35
+    e_min = 0.30
     dic_b = {'parameter_name': 'b', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
     b_max = 0.83
     b_min = 0.13
@@ -4377,6 +4765,12 @@ def get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
     QFP_parameter_list.append(dic_θ1)
     QFP_parameter_list.append(dic_θ2)
     QFP_parameter_list.append(dic_θ3)
+    # 12.22新增：Φ（pin_diameter）=====
+
+    QFP_parameter_list.append(dic_phi)
+
+
+
 
     for i in range(len(top_ocr_data)):
         if D_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= D_max:
@@ -4385,16 +4779,14 @@ def get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
         if E_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= E_max:
             QFP_parameter_list[1]['maybe_data'].append(top_ocr_data[i])
             QFP_parameter_list[1]['maybe_data_num'] += 1
+        if len(body_x) > 0:
+            QFP_parameter_list[2]['maybe_data'] = body_x
         if D1_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= D1_max:
-            if len(body_x) > 0:
-                QFP_parameter_list[2]['maybe_data'] = body_x
-            else:
                 QFP_parameter_list[2]['maybe_data'].append(top_ocr_data[i])
                 QFP_parameter_list[2]['maybe_data_num'] += 1
+        if len(body_y) > 0:
+            QFP_parameter_list[3]['maybe_data'] = body_y
         if E1_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= E1_max:
-            if len(body_y) > 0:
-                QFP_parameter_list[3]['maybe_data'] = body_y
-            else:
                 QFP_parameter_list[3]['maybe_data'].append(top_ocr_data[i])
                 QFP_parameter_list[3]['maybe_data_num'] += 1
         if e_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= e_max:
@@ -4410,27 +4802,43 @@ def get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
             QFP_parameter_list[9]['maybe_data'].append(top_ocr_data[i])
             QFP_parameter_list[9]['maybe_data_num'] += 1
     for i in range(len(bottom_ocr_data)):
-        if D_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= D_max:
+        if D_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= D_max  :
             QFP_parameter_list[0]['maybe_data'].append(bottom_ocr_data[i])
             QFP_parameter_list[0]['maybe_data_num'] += 1
-        if E_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= E_max:
+        if E_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= E_max :
             QFP_parameter_list[1]['maybe_data'].append(bottom_ocr_data[i])
             QFP_parameter_list[1]['maybe_data_num'] += 1
         if D1_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= D1_max:
-            if len(body_x) > 0:
-                QFP_parameter_list[2]['maybe_data'] = body_x
-            else:
+           if bottom_ocr_data[i].get('Absolutely') == 'Body_x':
                 QFP_parameter_list[2]['maybe_data'].append(bottom_ocr_data[i])
                 QFP_parameter_list[2]['maybe_data_num'] += 1
+            # ===== 新增：Φ 只从 bottom_ocr_data 来，且 Absolutely == 'pin_diameter' =====
+            # ===== 新增：Φ只从bottom来，且Absolutely == pin_diameter =====
+        if bottom_ocr_data[i].get('Absolutely') == 'pin_diameter' or bottom_ocr_data[i].get(
+                'Absolutely') == 'mb_pin_diameter' or bottom_ocr_data[i].get('Absolutely') == 'pin_diameter+':
+            if phi_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][
+                0] <= phi_max:
+                QFP_parameter_list[phi_idx]['maybe_data'].append(bottom_ocr_data[i])  # 用-1永远指向最后一个（Φ）
+                QFP_parameter_list[phi_idx]['maybe_data_num'] += 1
+        # =====================================================================
+
         if E1_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= E1_max:
-            if len(body_y) > 0:
-                QFP_parameter_list[3]['maybe_data'] = body_y
-            else:
+            if bottom_ocr_data[i].get('Absolutely') == 'Body_y':
                 QFP_parameter_list[3]['maybe_data'].append(bottom_ocr_data[i])
                 QFP_parameter_list[3]['maybe_data_num'] += 1
-        if e_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= e_max:
-            QFP_parameter_list[6]['maybe_data'].append(bottom_ocr_data[i])
-            QFP_parameter_list[6]['maybe_data_num'] += 1
+        #0111新增：将ocr中最大的数据填入D1与E1的候选列表中
+        # Max_index_D = max_maybe_data_medium(QFP_parameter_list[0])  # 0为D，1为E，2为D1，3为E1
+        # Max_index_E = max_maybe_data_medium(QFP_parameter_list[1])
+        # QFP_parameter_list[2]['maybe_data'].append(bottom_ocr_data[Max_index_D])
+        # QFP_parameter_list[2]['maybe_data_num'] += 1
+        # QFP_parameter_list[3]['maybe_data'].append(bottom_ocr_data[Max_index_E])
+        # QFP_parameter_list[3]['maybe_data_num'] += 1
+
+        if bottom_ocr_data[i].get('Absolutely') != 'pin_diameter' and bottom_ocr_data[i].get(
+                'Absolutely') != 'mb_pin_diameter' and bottom_ocr_data[i].get('Absolutely') != 'pin_diameter+':
+            if e_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= e_max:
+                QFP_parameter_list[6]['maybe_data'].append(bottom_ocr_data[i])
+                QFP_parameter_list[6]['maybe_data_num'] += 1
         if b_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= b_max:
             QFP_parameter_list[7]['maybe_data'].append(bottom_ocr_data[i])
             QFP_parameter_list[7]['maybe_data_num'] += 1
@@ -4440,6 +4848,7 @@ def get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
         if E2_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= E2_max:
             QFP_parameter_list[9]['maybe_data'].append(bottom_ocr_data[i])
             QFP_parameter_list[9]['maybe_data_num'] += 1
+
     for i in range(len(side_ocr_data)):
         if D_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= D_max:
             QFP_parameter_list[0]['maybe_data'].append(side_ocr_data[i])
@@ -4448,15 +4857,9 @@ def get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
             QFP_parameter_list[1]['maybe_data'].append(side_ocr_data[i])
             QFP_parameter_list[1]['maybe_data_num'] += 1
         if D1_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= D1_max:
-            if len(body_x) > 0:
-                QFP_parameter_list[2]['maybe_data'] = body_x
-            else:
                 QFP_parameter_list[2]['maybe_data'].append(side_ocr_data[i])
                 QFP_parameter_list[2]['maybe_data_num'] += 1
         if E1_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= E1_max:
-            if len(body_y) > 0:
-                QFP_parameter_list[3]['maybe_data'] = body_y
-            else:
                 QFP_parameter_list[3]['maybe_data'].append(side_ocr_data[i])
                 QFP_parameter_list[3]['maybe_data_num'] += 1
         if A_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= A_max:
@@ -4505,8 +4908,27 @@ def get_QFP_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
                 QFP_parameter_list[16]['maybe_data'].append(detailed_ocr_data[i])
                 QFP_parameter_list[16]['maybe_data_num'] += 1
 
+    for i in range(len(QFP_parameter_list)):
+        maybe = QFP_parameter_list[i].get("maybe_data", [])
+        seen = set()
+        new_maybe = []
+
+        for j in range(len(maybe)):
+            mmm = maybe[j].get("max_medium_min")
+            if mmm is None:
+                continue  # 没有这个字段就跳过（你也可以选择保留）
+
+            key = tuple(mmm)  # [15.1, 15, 14.9] -> (15.1, 15, 14.9)
+            if key in seen:
+                continue  # 重复，丢弃
+            seen.add(key)
+            new_maybe.append(maybe[j])
+
+        QFP_parameter_list[i]["maybe_data"] = new_maybe
+        QFP_parameter_list[i]["maybe_data_num"] = len(new_maybe)
 
     for i in range(len(QFP_parameter_list)):
+        print("筛选完毕，以下是第一次填参结果：")
         print("***/", QFP_parameter_list[i]['parameter_name'],"/***")
 
         for j in range(len(QFP_parameter_list[i]['maybe_data'])):
@@ -4523,7 +4945,7 @@ def resort_parameter_list_2(QFP_parameter_list):
     2.将其他参数的可能标注中去除这个确定标注
     3.返回1
     '''
-
+    print("继续筛选参数，确定唯一值：")
     key = True
     while key:
         key = False
@@ -4746,7 +5168,7 @@ def find_pin_num_pin_1(serial_numbers_data, serial_letters_data, serial_numbers,
 
     return pin_num_x_serial, pin_num_y_serial, pin_1_location
 
-def get_QFP_body(yolox_pairs_top, top_yolox_pairs_length, yolox_pairs_bottom, bottom_yolox_pairs_length, top_border, bottom_border, top_ocr_data, bottom_ocr_data):
+def get_body(yolox_pairs_top, top_yolox_pairs_length, yolox_pairs_bottom, bottom_yolox_pairs_length, top_border, bottom_border, top_ocr_data, bottom_ocr_data):
     '''
     # yolox_pairs_top,np.二维数组（，11）[pairs_x1_y1_x2_y2,标注x1_y1_x2_y2，max,medium,min]
     # top_yolox_pairs_length,np.二维数组（，13）[pairs_x1_y1_x2_y2,引线1_x1_y1_x2_y2,引线2_x1_y1_x2_y2,两引线距离]
@@ -4985,3 +5407,197 @@ def get_QFP_body(yolox_pairs_top, top_yolox_pairs_length, yolox_pairs_bottom, bo
     print("---结束用引线方法寻找body---")
     print("body_x, body_y", body_x, body_y)
     return body_x, body_y
+
+
+# 1218 新添加：收集各 pdf 的 yolox/dbnet 结果与最终参数匹配结果，并以 txt 保存
+import sys
+import re
+from pathlib import Path
+from contextlib import contextmanager
+
+
+@contextmanager
+def redirect_print_to_file(txt_path: Path, mode: str = "w"):
+    """
+    临时将 print 输出重定向到 txt 文件
+    mode:
+      - "w" 覆盖写
+      - "a" 追加写
+    """
+    txt_path = Path(txt_path)
+    txt_path.parent.mkdir(parents=True, exist_ok=True)
+
+    old_stdout = sys.stdout
+    with open(txt_path, mode, encoding="utf-8") as f:
+        sys.stdout = f
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+
+
+from typing import Union
+from pathlib import Path
+
+def get_first_pdf(pdf_dir: Union[str, Path] = "Result/temp") -> Path:
+    """
+    获取 pdf_dir 下的第一个 pdf（按文件名排序）
+    """
+    pdf_dir = Path(pdf_dir)
+    pdf_files = sorted(pdf_dir.glob("*.pdf"))
+    if not pdf_files:
+        raise FileNotFoundError(f"{pdf_dir} 下没有 pdf 文件")
+    return pdf_files[0]
+
+
+def get_pdf_log_dir(pdf_path: Path, txt_root_dir: str | Path = "Result/log") -> Path:
+    """
+    为每个 pdf 创建独立日志子目录：
+      Result/log/<pdf_stem>/
+    """
+    txt_root_dir = Path(txt_root_dir)
+    log_dir = txt_root_dir / pdf_path.stem
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
+
+def build_numbered_txt_path(log_dir: Path, base_name: str, view_idx: int | None = None) -> Path:
+    """
+    在同一 PDF 的日志目录下，为同类日志生成带编号的 txt：
+      base_name(1).txt, base_name(2).txt ...
+    - 如果 view_idx 传入：直接生成 base_name(view_idx).txt
+    - 如果不传：自动扫描已有文件，取下一个可用编号
+    """
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    if view_idx is not None:
+        return log_dir / f"{base_name}({view_idx}).txt"
+
+    # 自动递增编号：找 base_name(n).txt 的最大 n
+    pattern = re.compile(rf"^{re.escape(base_name)}\((\d+)\)\.txt$", re.IGNORECASE)
+    max_n = 0
+    for p in log_dir.glob(f"{base_name}(*).txt"):
+        m = pattern.match(p.name)
+        if m:
+            max_n = max(max_n, int(m.group(1)))
+
+    next_n = max_n + 1
+    return log_dir / f"{base_name}({next_n}).txt"
+
+
+def run_and_save_resort_log(
+        QFP_parameter_list,
+        temp_dir: str | Path = "Result/temp",
+        txt_root_dir: str | Path = "BGA_pdf",
+        base_name: str = "resort_log",
+        view_idx: int | None = None,
+        mode: str = "w"
+) -> Path:
+    """
+    执行 resort_parameter_list_2，并将所有 print 输出保存为：
+      Result/log/<pdf_stem>/resort_log(1).txt  / resort_log(2).txt ...
+    """
+    pdf_path = get_first_pdf(temp_dir)
+    log_dir = get_pdf_log_dir(pdf_path, txt_root_dir)
+    txt_path = build_numbered_txt_path(log_dir, base_name, view_idx=view_idx)
+
+    with redirect_print_to_file(txt_path, mode=mode):
+        print(f"===== PDF: {pdf_path.name} =====")
+        print(f"===== VIEW: {view_idx if view_idx is not None else 'AUTO'} =====")
+        print("===== RESORT PARAMETER LOG =====")
+        resort_parameter_list_2(QFP_parameter_list)
+
+    return txt_path
+
+
+def run_and_save_resort_log2(
+        top_ocr_data,
+        bottom_ocr_data,
+        side_ocr_data,
+        detailed_ocr_data,
+        temp_dir: str | Path = "Result/temp",
+        txt_root_dir: str | Path = "BGA_pdf",
+        base_name: str = "ocr_log",
+        view_idx: int | None = None,
+        mode: str = "w"
+) -> Path:
+    """
+    将 OCR 相关数据保存为：
+      Result/log/<pdf_stem>/ocr_log(1).txt / ocr_log(2).txt ...
+    """
+    pdf_path = get_first_pdf(temp_dir)
+    log_dir = get_pdf_log_dir(pdf_path, txt_root_dir)
+    txt_path = build_numbered_txt_path(log_dir, base_name, view_idx=view_idx)
+
+    with redirect_print_to_file(txt_path, mode=mode):
+        print(f"===== PDF: {pdf_path.name} =====")
+        print(f"===== VIEW: {view_idx if view_idx is not None else 'AUTO'} =====")
+
+        print("\n===== TOP OCR DATA =====")
+        print(top_ocr_data)
+
+        print("\n===== BOTTOM OCR DATA =====")
+        print(bottom_ocr_data)
+
+        print("\n===== SIDE OCR DATA =====")
+        print(side_ocr_data)
+
+        print("\n===== DETAILED OCR DATA =====")
+        print(detailed_ocr_data)
+
+    return txt_path
+
+# 0111新增 用框的坐标计算坐标框的长度,并把横纵长度最长的bottom_ocr_data数据标记为长宽
+def Body_x_y_length(bottom_ocr_data):
+    if not bottom_ocr_data:
+        return bottom_ocr_data
+    max_width = -1
+    max_height = -1
+    width_index = None
+    height_index = None
+    for i, item in enumerate(bottom_ocr_data):
+        location = item.get('matched_pairs_location', [])
+        if len(location) < 4:
+            continue
+        width = abs(location[2] - location[0])
+        height = abs(location[3] - location[1])
+        if width > max_width:
+            max_width = width
+            width_index = i
+        if height > max_height:
+            max_height = height
+            height_index = i
+    if width_index is not None and not bottom_ocr_data[width_index]['Absolutely']:
+        bottom_ocr_data[width_index]['Absolutely'] = 'Body_x'
+        print("该元素拥有横向最大长度箭头对：",bottom_ocr_data[width_index])
+    else :
+        print("未找到横向最大长度箭头对")
+    if height_index is not None and not bottom_ocr_data[height_index]['Absolutely']:
+        bottom_ocr_data[height_index]['Absolutely'] = 'Body_y'
+        print("该元素拥有纵向最大长度箭头对：",bottom_ocr_data[height_index])
+    else :
+        print("未找到纵向最大长度箭头对")
+    return bottom_ocr_data
+
+# 0111新增,找出候选参数maybe_data中medium值最大的元素
+def max_maybe_data_medium(param):
+        """
+        输入: param = QFP_parameter_list[i]
+        输出: j (使 param['maybe_data'][j]['max_medium_min'][1] 最大的索引)
+             如果 maybe_data 为空或找不到有效值，返回 -1
+        """
+        best_j = -1
+        best_medium = float("-inf")
+
+        maybe = param.get("maybe_data", [])
+        for j in range(len(maybe)):
+            mmm = maybe[j].get("max_medium_min", None)
+            if mmm is None or len(mmm) < 2:
+                continue
+            medium = float(mmm[1])
+            if medium > best_medium:
+                best_medium = medium
+                best_j = j
+
+        return best_j

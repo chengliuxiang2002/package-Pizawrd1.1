@@ -240,7 +240,7 @@ def find_SON_parameter(L3):
 
     # (9)输出序号nx,ny和body_x、body_y
     nx, ny = get_serial(top_serial_numbers_data, bottom_serial_numbers_data)
-    body_x, body_y = get_QFP_body(yolox_pairs_top, top_yolox_pairs_length, yolox_pairs_bottom,
+    body_x, body_y = get_body(yolox_pairs_top, top_yolox_pairs_length, yolox_pairs_bottom,
                                   bottom_yolox_pairs_length, top_border, bottom_border, top_ocr_data,
                                   bottom_ocr_data)
     # (10)初始化参数列表

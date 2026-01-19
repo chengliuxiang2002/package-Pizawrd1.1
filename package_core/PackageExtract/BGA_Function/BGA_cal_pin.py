@@ -17,6 +17,8 @@ import statistics
 import queue
 import threading
 
+from package_core.UI.AI.AI_extract_pin import AI_extract_pin
+
 # 导入统一路径管理
 try:
     from package_core.PackageExtract.yolox_onnx_py.model_paths import result_path
@@ -1924,6 +1926,7 @@ def find_pin_core():
     # 存储网格
     pin_map = get_pin_grid(a, b, c, d, test_mode)
     # # 显示各个网格
+    # print("显示网格》》》》》》》》》》》》》》》》》》》》》》")
     # show_pin_grid(pin_map, c, d)
     # # 计算各个网格中的信息熵
     pin_map_wangge = pin_map.copy()
@@ -2108,11 +2111,12 @@ def find_pin(bottom_border):
     empty_folder(BGA_BOTTOM)
     os.makedirs(BGA_BOTTOM)
     # bga_bottom中如果存在两张图片，yolox检测，保留pin数量多的存为pinmap.jpg
+    print("border:", bottom_border)
     key = yolox_find_waikuang(bottom_border)
     if key:
         get_waikaung()
         find_right_img()
-    # get_pinmap()
+    #get_pinmap()
     output_list = find_pin_core()
     return output_list
 
@@ -2611,66 +2615,101 @@ def Is_Loss_Pin(pin_map, pin_1_location, color):
 
 # 运行 BGA PIN 提取流程的入口。
 def extract_BGA_PIN():
-    """运行 BGA PIN 提取流程的入口。"""
+    """运行 BGA PIN 提取流程的入口（优化版：并行执行 + 精简逻辑）。"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     print("开始提取BGA的PIN")
     package_classes = 'BGA'
     package_path = page_path
     img_path = f'{package_path}/bottom.jpg'
-    # 如果目标文件存在，则先删除
-    if os.path.exists(f'{DATA}/bottom.jpg'):
-        os.remove(f'{DATA}/bottom.jpg')
 
+    # 准备数据目录
     os.makedirs(DATA, exist_ok=True)
+    path = f'{DATA}/bottom.jpg'
 
-    # 移动文件
-    shutil.copy2(img_path, f'{DATA}/bottom.jpg')
+    # 确保 `DATA_BOTTOM_CROP` 存在（用于保存 pinmap.jpg 等）
+    os.makedirs(DATA_BOTTOM_CROP, exist_ok=True)
 
-    bottom_dbnet_data = dbnet_get_text_box(img_path)
-    bottom_yolox_pairs, bottom_yolox_num, bottom_yolox_serial_num, bottom_pin, bottom_other, bottom_pad, bottom_border, bottom_angle_pairs, bottom_BGA_serial_num, bottom_BGA_serial_letter = yolo_classify(
-        img_path, package_classes)
+    # 仅当源文件与目标不同时才复制
+    if os.path.abspath(img_path) != os.path.abspath(path):
+        shutil.copy2(img_path, path)
 
+    # ============ 并行执行：yolo_classify 和 BGA_get_PIN ============
+    # yolo_classify 用于获取 bottom_border 和序列信息（计算 loss_pin 需要）
+    # BGA_get_PIN 直接获取最终的 pin_num_x_serial, pin_num_y_serial
+
+    yolo_result = None
+    pin_result = None
+
+    def run_yolo():
+        return yolo_classify(img_path, package_classes)
+
+    def run_bga_get_pin():
+        return BGA_get_PIN(path)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_yolo = executor.submit(run_yolo)
+        future_pin = executor.submit(run_bga_get_pin)
+
+        for future in as_completed([future_yolo, future_pin]):
+            try:
+                if future == future_yolo:
+                    yolo_result = future.result()
+                else:
+                    pin_result = future.result()
+            except Exception as e:
+                print(f"并行任务出错: {e}")
+
+    # 解析 yolo 结果
+    if yolo_result is not None:
+        (bottom_yolox_pairs, bottom_yolox_num, bottom_yolox_serial_num,
+         bottom_pin, bottom_other, bottom_pad, bottom_border,
+         bottom_angle_pairs, bottom_BGA_serial_num, bottom_BGA_serial_letter) = yolo_result
+        serial_numbers = bottom_BGA_serial_num
+        serial_letters = bottom_BGA_serial_letter
+    else:
+        bottom_border = np.empty((0, 4))
+        serial_numbers = np.empty((0, 4))
+        serial_letters = np.empty((0, 4))
+
+    # 解析 BGA_get_PIN 结果
+    if pin_result is not None:
+        _, _, pin_num_x_serial, pin_num_y_serial,_,_,_,_ = pin_result
+    else:
+        print("BGA_get_PIN 结果为空，重新调用")
+        _, _, pin_num_x_serial, pin_num_y_serial,_,_,_,_ = BGA_get_PIN(path)
+
+    # ============ 计算 loss_pin（使用 pinmap）============
     pin_map, color = time_save_find_pinmap(bottom_border)
     print("pin_map", pin_map)
 
-    # pin_map的行数为列pin数， 列数为行pin数
-    rows, cols = pin_map.shape
+    # 计算 pin_1_location（保持正确率）
+    # 简化逻辑：根据序列号/字母位置推断起始角
+    pin_1_location = [0, 0]  # 默认：横向数字、纵向字母，左上角起始
+    try:
+        if len(serial_letters) > 0 and len(serial_numbers) > 0:
+            # 根据序列位置确定方向
+            letter_positions = np.array([s[0] for s in serial_letters]) if hasattr(serial_letters[0], '__iter__') else serial_letters[:, 0]
+            number_positions = np.array([s[0] for s in serial_numbers]) if hasattr(serial_numbers[0], '__iter__') else serial_numbers[:, 0]
 
+            # 判断横纵向标记方式
+            letter_x_var = np.var(letter_positions) if len(letter_positions) > 1 else 0
+            number_x_var = np.var(number_positions) if len(number_positions) > 1 else 0
 
-    serial_letters = bottom_BGA_serial_letter
-    serial_numbers = bottom_BGA_serial_num
-    bottom_dbnet_data_serial = bottom_dbnet_data.copy()
-    serial_numbers_data, serial_letters_data, bottom_dbnet_data = find_serial_number_letter(serial_numbers,
-                                                                                            serial_letters,
-                                                                                            bottom_dbnet_data)
-    path = f'{DATA}/bottom.jpg'
-    bottom_ocr_data = ocr_data(path, bottom_dbnet_data_serial)
-    serial_numbers_data, serial_letters_data, bottom_ocr_data = filter_bottom_ocr_data(bottom_ocr_data,
-                                                                                       bottom_dbnet_data_serial,
-                                                                                       serial_numbers_data,
-                                                                                       serial_letters_data,
-                                                                                       bottom_dbnet_data)
-    pin_num_x_serial, pin_num_y_serial, pin_1_location = find_pin_num_pin_1(serial_numbers_data,
-                                                                            serial_letters_data,
-                                                                            serial_numbers, serial_letters)
+            if letter_x_var < number_x_var:
+                pin_1_location[0] = 0  # 字母纵向排列
+            else:
+                pin_1_location[0] = 1  # 字母横向排列
+    except Exception as e:
+        print(f"计算 pin_1_location 时出错: {e}，使用默认值")
+
     try:
         loss_pin, loss_color = Is_Loss_Pin(pin_map, pin_1_location, color)
     except:
         loss_pin = []
         loss_color = []
-    if len(loss_pin) == 0:
-        loss_pin1 = 'None'
-    else:
-        loss_pin1 = loss_pin
 
-    pin_num_x_serial = int(pin_num_x_serial)
-    pin_num_y_serial = int(pin_num_y_serial)
-
-    if pin_num_x_serial == 0:
-        pin_num_x_serial = rows
-    if pin_num_y_serial == 0:
-        pin_num_y_serial = cols
-
-    _,_,pin_num_x_serial, pin_num_y_serial = BGA_get_PIN(path)
+    loss_pin1 = 'None' if len(loss_pin) == 0 else loss_pin
 
     return pin_num_x_serial, pin_num_y_serial, loss_pin1, loss_color
 
@@ -2689,3 +2728,5 @@ def long_running_task(result_queue, bottom_border):
 if __name__ == '__main__':
     pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color = extract_BGA_PIN()
     print(pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color)
+
+    # output_list = find_pin_core()

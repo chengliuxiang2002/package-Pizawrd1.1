@@ -228,6 +228,7 @@ def manage_json(package_information):
     :return cla_lis: [{'package': []}, {'keyview': []}, {'top': []}, {'side': []}, {'side': []}, {'Note': []},{'Table': []}]
     """
     data = package_information
+    package_type = data['package_type']
     sigle_dict = {}  # 存放每一页的封装信息
     table_dict = {}
     type = {}
@@ -260,8 +261,7 @@ def manage_json(package_information):
                 table_dict[data['page']][tuple(parts['rect'])] = parts['page'] #key为坐标，values为表格所在页，这样就可以区分目标封装图匹配多个表的情况
     # print(sigle_dict) # 此处的页数+1才是实际PDF页数，比如说dict内是27，实际PDF页为28
     manage_package = [sigle_dict,table_dict,type]
-    # print(manage_package)
-    return manage_package
+    return manage_package, package_type
 
 def hist(img, show_img_key):
     # 求出img 的最大最小值

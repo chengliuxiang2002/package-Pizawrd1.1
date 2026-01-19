@@ -27,6 +27,15 @@ except ModuleNotFoundError:  # pragma: no cover - 兼容脚本直接运行
         vis,
     )
 
+# 导入性能分析工具
+try:
+    from package_core.profiler import model_timer
+except ImportError:
+    from contextlib import contextmanager
+    @contextmanager
+    def model_timer(name, extra_info=None):
+        yield
+
 import argparse
 import json
 import os
@@ -102,7 +111,11 @@ def onnx_output_waikuang(path):
     session = onnxruntime.InferenceSession(args.model)
 
     ort_inputs = {session.get_inputs()[0].name: img[None, :, :, :]}
-    output = session.run(None, ort_inputs)
+
+    # 使用model_timer记录YOLOX外框检测推理时间
+    with model_timer("YOLOX-外框检测", {"input_shape": str(input_shape)}):
+        output = session.run(None, ort_inputs)
+
     predictions = demo_postprocess(output[0], input_shape)[0]
 
     boxes = predictions[:, :4]

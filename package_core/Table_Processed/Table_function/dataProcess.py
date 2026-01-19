@@ -39,10 +39,13 @@ def get_text_blocks(image):
                 'bbox': [x1, y1]
             })
     return blocks
+
 def build_table_from_blocks(blocks, row_threshold=15):
     """
-    表格构建算法，使用列中心聚类
+    表格构建算法（优化版：使用间隙聚类替代KMeans + 二分查找）
     """
+    from bisect import bisect_left
+
     if not blocks:
         return []
 
@@ -51,8 +54,8 @@ def build_table_from_blocks(blocks, row_threshold=15):
 
     # 自适应行阈值计算
     y_coords = [b['bbox'][1] for b in blocks]
-    y_diffs = [y_coords[i + 1] - y_coords[i] for i in range(len(y_coords) - 1)]
-    if y_diffs:
+    if len(y_coords) > 1:
+        y_diffs = [y_coords[i + 1] - y_coords[i] for i in range(len(y_coords) - 1)]
         avg_diff = sum(y_diffs) / len(y_diffs)
         row_threshold = max(row_threshold, avg_diff * 0.5)
 
@@ -60,32 +63,65 @@ def build_table_from_blocks(blocks, row_threshold=15):
     rows = []
     current_row = [blocks[0]]
     for block in blocks[1:]:
-        last_block = current_row[-1]
-        if abs(block['bbox'][1] - last_block['bbox'][1]) < row_threshold:
+        if abs(block['bbox'][1] - current_row[-1]['bbox'][1]) < row_threshold:
             current_row.append(block)
         else:
             rows.append(current_row)
             current_row = [block]
     rows.append(current_row)
 
-    # 提取所有X坐标用于聚类
-    all_x = [b['bbox'][0] for b in blocks]
-    X = np.array(all_x).reshape(-1, 1)
+    # 使用间隙聚类替代KMeans（更高效的1D聚类）
+    all_x = sorted(set(b['bbox'][0] for b in blocks))
+    if len(all_x) <= 1:
+        col_centers = all_x if all_x else [0]
+    else:
+        # 计算相邻X坐标的间隙，按间隙大小分割成列
+        gaps = [(all_x[i+1] - all_x[i], i) for i in range(len(all_x) - 1)]
+        avg_gap = sum(g[0] for g in gaps) / len(gaps) if gaps else 0
 
-    # 聚类数 = 最大列数
-    max_cols = max(len(row) for row in rows)
-    kmeans = KMeans(n_clusters=min(max_cols, len(X)), random_state=0).fit(X)
-    col_centers = sorted(kmeans.cluster_centers_.flatten())
+        # 根据最大列数确定分割点
+        max_cols = max(len(row) for row in rows)
+        num_splits = min(max_cols - 1, len(gaps))
 
-    # 每行按列中心分配文本块，并填充 "_"
+        if num_splits > 0 and avg_gap > 0:
+            # 选择最大的间隙作为列分割点
+            sorted_gaps = sorted(gaps, key=lambda x: -x[0])
+            split_indices = sorted([g[1] for g in sorted_gaps[:num_splits]])
+
+            # 计算每列的中心点
+            col_centers = []
+            start = 0
+            for idx in split_indices:
+                cluster_x = all_x[start:idx + 1]
+                col_centers.append(sum(cluster_x) / len(cluster_x))
+                start = idx + 1
+            if start < len(all_x):
+                cluster_x = all_x[start:]
+                col_centers.append(sum(cluster_x) / len(cluster_x))
+        else:
+            col_centers = all_x
+
+    col_centers = sorted(col_centers)
+
+    # 每行按列中心分配文本块，使用二分查找
     aligned_table = []
     for row in rows:
         row.sort(key=lambda b: b['bbox'][0])
         row_dict = {}
         for block in row:
             x = block['bbox'][0]
-            closest_col = min(col_centers, key=lambda c: abs(c - x))
-            col_idx = col_centers.index(closest_col)
+            # 二分查找最近的列中心
+            pos = bisect_left(col_centers, x)
+            if pos == 0:
+                col_idx = 0
+            elif pos == len(col_centers):
+                col_idx = len(col_centers) - 1
+            else:
+                # 比较左右两个候选
+                if abs(col_centers[pos] - x) < abs(col_centers[pos - 1] - x):
+                    col_idx = pos
+                else:
+                    col_idx = pos - 1
             row_dict[col_idx] = block['text']
 
         # 插入 "_" 表示空白单元格
@@ -216,36 +252,53 @@ def get_texts_from_coordinate(pdfPath, pageNumber,tableCoordinate, cellsCoordina
         table = []
     return table
 
-# 读取不可编辑表格
+# 读取不可编辑表格（优化版：预处理减少重复计算）
 def get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate):
-    
     from package_core.Table_Processed.ocr_onnx.OCR_use import ONNX_Use
     words, coordinates = ONNX_Use(TableImage, 'test')
 
-    for index in range(coordinates.__len__()):
-        coordinates[index][0] = tableCoordinate[0]+round(coordinates[index][0]*2/4)
-        coordinates[index][1] = tableCoordinate[1]+round(coordinates[index][1]*2/4)
+    num_rows = len(cellsCoordinate)
+    num_cols = len(cellsCoordinate[0]) if num_rows > 0 else 0
 
-    zipped_list = list(zip(words, coordinates))
-    zipped_list = sorted(zipped_list, key=lambda x: x[1][0])
-    zipped_list = sorted(zipped_list, key=lambda x: x[1][1])
+    if not words or not coordinates:
+        return [['' for _ in range(num_cols)] for _ in range(num_rows)]
+
+    # 坐标转换
+    scale_factor = 0.5  # 2/4 = 0.5
+    for coord in coordinates:
+        coord[0] = tableCoordinate[0] + round(coord[0] * scale_factor)
+        coord[1] = tableCoordinate[1] + round(coord[1] * scale_factor)
+
+    # 按 y 坐标排序，相同 y 按 x 排序
+    zipped_list = sorted(zip(words, coordinates), key=lambda x: (x[1][1], x[1][0]))
     words, coordinates = zip(*zipped_list)
     words, coordinates = list(words), list(coordinates)
 
-    table = [['' for _ in  range(len(cellsCoordinate[0]))] for _ in range(len(cellsCoordinate))]
-    for i in range(len(cellsCoordinate)):
-        for j in range(len(cellsCoordinate[0])):
-            for index in range(len(coordinates)):
-                text = words[index]
-                x,y = coordinates[index]
-                x1,y1,x2,y2 = cellsCoordinate[i][j]
-                if x1 <= x <= x2 and y1 <= y <= y2:
-                    if table[i][j] == '':
-                        table[i][j]+=text
-                    else:
-                        table[i][j]+='_'+ text
+    # 初始化表格（使用列表存储，最后合并）
+    table = [[[] for _ in range(num_cols)] for _ in range(num_rows)]
 
-    return table
+    # 遍历每个文本，找到其所属单元格（考虑合并单元格）
+    for index in range(len(coordinates)):
+        text = words[index]
+        x, y = coordinates[index]
+        # 遍历所有单元格，找到包含该坐标的单元格
+        for i in range(num_rows):
+            for j in range(num_cols):
+                x1, y1, x2, y2 = cellsCoordinate[i][j]
+                if x1 <= x <= x2 and y1 <= y <= y2:
+                    table[i][j].append(text)
+                    break  # 找到后跳出内层循环
+            else:
+                continue
+            break  # 找到后跳出外层循环
+
+    # 合并单元格内的文本
+    result = [['' for _ in range(num_cols)] for _ in range(num_rows)]
+    for i in range(num_rows):
+        for j in range(num_cols):
+            result[i][j] = '_'.join(table[i][j]) if table[i][j] else ''
+
+    return result
 
 ##1031
 # 矢量方法构建表格
@@ -349,6 +402,50 @@ def _find_vector_lines2(page: fitz.Page, table_rect: fitz.Rect):
     print(f"INFO: 在区域内找到 {len(h_lines)} 条原始水平线段, {len(v_lines)} 条原始垂直线段。")
     return h_lines, v_lines
 
+def _find_vector_lines_universal(page: fitz.Page, table_rect: fitz.Rect,
+                                 stroke_thres=0.5, margin=2):
+    expanded = table_rect + (-margin, -margin, margin, margin)
+    h_seg, v_seg = [], []
+
+    for p in page.get_drawings():
+        # 可选：跳过透明或白色线条
+        if p.get("stroke_opacity", 1) == 0:
+            continue
+
+        for cmd, arg, *_ in p["items"]:
+            if cmd == "l":
+                try:
+                    x0, y0, x1, y1 = arg
+                except ValueError:
+                    try:
+                        (x0, y0), (x1, y1) = arg[0], arg[1]
+                    except (TypeError, ValueError):
+                        continue
+            elif cmd == "re":
+                r = arg
+                if r.width > r.height and r.height < stroke_thres:   # 水平线
+                    x0, y0, x1, y1 = r.x0, r.y0, r.x1, r.y0
+                elif r.height > r.width and r.width < stroke_thres:  # 垂直线
+                    x0, y0, x1, y1 = r.x0, r.y0, r.x0, r.y1
+                else:
+                    continue
+            else:
+                continue
+
+            # 只保留落在 expanded 区域内的线段
+            if not (expanded.x0 <= min(x0, x1) and max(x0, x1) <= expanded.x1 and
+                    expanded.y0 <= min(y0, y1) and max(y0, y1) <= expanded.y1):
+                continue
+
+            if abs(y1 - y0) < stroke_thres:      # 水平
+                h_seg.append((x0, y0, x1, y1))
+            elif abs(x1 - x0) < stroke_thres:    # 垂直
+                v_seg.append((x0, y0, x1, y1))
+
+    print(f"INFO: 共提取 {len(h_seg)} 条水平线段，{len(v_seg)} 条垂直线段")
+    h_lines = [fitz.Rect(x0, y0, x1, y1) for (x0, y0, x1, y1) in h_seg]
+    v_lines = [fitz.Rect(x0, y0, x1, y1) for (x0, y0, x1, y1) in v_seg]
+    return h_lines, v_lines
 def _is_grid_complete_by_borders(h_lines, v_lines, table_rect: fitz.Rect):
     """
     判断标准:
@@ -487,10 +584,13 @@ def _build_grid_boundaries(page, table_rect, h_lines, v_lines):
     col_boundaries = merge_close_coords(col_coords, tolerance=2.0)  # 列有时候很密，Tolerance可以适当调小
 
     return row_boundaries, col_boundaries
+
 def _extract_text_from_grid(page, table_rect, row_boundaries, col_boundaries):
     """
-    在构建好的网格中，提取每个单元格的文本内容。
+    在构建好的网格中，提取每个单元格的文本内容。（优化版：使用二分查找）
     """
+    from bisect import bisect_right
+
     words = page.get_text("words", clip=table_rect)
     if not words:
         return [[]]
@@ -501,11 +601,12 @@ def _extract_text_from_grid(page, table_rect, row_boundaries, col_boundaries):
     temp_grid = [[[] for _ in range(num_cols)] for _ in range(num_rows)]
 
     for word in words:
-        # 使用单词中心点来判断其归属的单元格，避免跨单元格单词被重复添加
-        word_center = fitz.Point((word[0] + word[2]) / 2, (word[1] + word[3]) / 2)
-        # 二分查找可以优化，但对于一般表格，线性查找足够快
-        r = next((i for i, y in enumerate(row_boundaries) if y > word_center.y), num_rows) - 1
-        c = next((i for i, x in enumerate(col_boundaries) if x > word_center.x), num_cols) - 1
+        # 使用单词中心点来判断其归属的单元格
+        word_center_x = (word[0] + word[2]) / 2
+        word_center_y = (word[1] + word[3]) / 2
+        # 使用二分查找定位行列 O(log n) vs O(n)
+        r = bisect_right(row_boundaries, word_center_y) - 1
+        c = bisect_right(col_boundaries, word_center_x) - 1
         if 0 <= r < num_rows and 0 <= c < num_cols:
             temp_grid[r][c].append(word)
 
@@ -712,13 +813,13 @@ def Is_Common_package(table):
                         matched_elements.add(element)
                         count += 1
             if count > 3:
-                if index == 0 or index == math.floor(len(table)/2) - 1:
+                # 修复：对于只有少量行的表格，如果在前几行找到参数名，认为是横向表格需要转置
+                if index == 0 or index == 1:
+                    return -1  # 转表不转图
+                if index == math.floor(len(table)/2) - 1:
                     return 0
                 if index >= len(table)/2:
                     return 90
-                # 转表不转图
-                elif index == len(table)/2 - 1:
-                    return -1
         # 没找到就直接顺时针旋转270，即逆时针旋转90
         return 270
 # 转表不转图
@@ -779,18 +880,22 @@ def find_MIN_NOM_MAX(table):
     global tmp
     cols = []
     title = 0
-    limit = 4 if len(table) > 2 else 2
+    # 修复：确保 limit 不超过表格行数
+    limit = min(4, len(table)) if len(table) > 2 else min(2, len(table))
     for i in range(limit):
         for j in range(table[0].__len__()):
             if table[i][j] == None or table[i][j].__len__()>20:
                 continue
             data = table[i][j].upper().replace(" ","").replace("\n","").replace(",","")
-            if any(item in data for item in ['NOM','MOM','MAX','MIN','TYP','MN','最小','最大','公称','典型','推荐值']) and j not in cols:
+            if any(item in data for item in ['NOM','MOM','MAX','MIN','TYP','MN','最小','最大','公称','标称','典型','推荐值']) and j not in cols:
                 cols.append(j)
                 title = i+1
     if cols.__len__() == 1:
         table = [list(row) for row in zip(*table)]
         cols = []
+        tmp = None  # 初始化 tmp
+        # 修复：转置后重新计算 limit
+        limit = min(4, len(table)) if len(table) > 2 else min(2, len(table))
         for i in range(limit):
             for j in range(table[0].__len__()):
                 if table[i][j] == None or table[i][j].__len__()>20:
@@ -803,7 +908,7 @@ def find_MIN_NOM_MAX(table):
                     tmp = j
         if cols.__len__() == 3:
             # 无论怎么排布保证字母在数字前一列
-            if tmp != cols[0] - 1:
+            if tmp is not None and tmp != cols[0] - 1:
                 for row in table:
                     # 交换指定列的元素  
                     row[cols[0] - 1], row[tmp] = row[tmp], row[cols[0] - 1]
@@ -822,6 +927,111 @@ def find_MIN_NOM_MAX(table):
         return title, [cols], table
     else:
         return 0,[], table
+
+def split_mm_inch_table(table):
+    """
+    检测并处理 mm/inch 混合表格，只保留毫米数据。
+
+    支持的表格格式：
+    - 合并格式: [Symbol+Min(mm), Nom(mm), Max(mm)+其他, inches...]
+    - 分开格式: [Symbol, Min(mm), Nom(mm), Max(mm), inches...]
+
+    输出格式: [Symbol, Min, Nom, Max] (仅毫米)
+    """
+    if not table or len(table) < 2:
+        return table
+
+    # 查找包含 millimeters 和 inches 的表头行
+    mm_col = -1
+    inch_col = -1
+
+    for row_idx, row in enumerate(table[:4]):  # 只检查前4行
+        for col_idx, cell in enumerate(row):
+            cell_lower = str(cell).lower().strip()
+            # 支持多种拼写: millimeter/millimeters/millimetre/millimetres/mm
+            if ('millimeter' in cell_lower or 'millimetre' in cell_lower or cell_lower == 'mm') and mm_col == -1:
+                mm_col = col_idx
+            # 支持 inch/inches
+            if 'inch' in cell_lower and inch_col == -1:
+                inch_col = col_idx
+
+    # 如果没有找到两种单位，不处理
+    if mm_col == -1 or inch_col == -1:
+        return table
+
+    # 确定 mm 列的结束位置（inches 列之前）
+    mm_end_col = inch_col
+
+    # 检测数据行是否是合并格式（第一个数据行的第0列是否包含空格）
+    is_merged_format = False
+    for row in table[2:5]:  # 检查几行数据
+        if row and len(row) > 0:
+            first_cell = str(row[0]).strip()
+            if ' ' in first_cell:
+                is_merged_format = True
+                break
+
+    new_table = []
+    for row_idx, row in enumerate(table):
+        # 只取 mm 相关的列 (0 到 mm_end_col-1)
+        mm_cells = [str(row[i]).strip() if i < len(row) else '' for i in range(mm_end_col)]
+
+        first_cell = mm_cells[0] if mm_cells else ''
+        first_parts = first_cell.split()
+        last_mm_cell = mm_cells[-1] if mm_cells else ''
+        last_parts = last_mm_cell.split()
+
+        new_row = []
+
+        if is_merged_format and len(mm_cells) == 3:
+            # 合并格式: [Symbol+Min, Nom, Max+其他]
+            # 拆分成: [Symbol, Min, Nom, Max]
+
+            # 检查是否是 min/nom/max 这种表头行
+            first_lower = first_cell.lower()
+            if first_lower in ['min', 'nom', 'max', 'typ', 'symbol']:
+                # 这是表头行，需要重新排列成 [Symbol, Min, Nom, Max]
+                new_row = ['Symbol', 'Min', 'Nom', 'Max']
+            elif len(first_parts) >= 2:
+                # 数据行：拆分第一列
+                new_row.append(first_parts[0])  # Symbol
+                new_row.append(first_parts[1])  # Min (mm)
+                new_row.append(mm_cells[1])  # Nom (mm)
+                # Max 在最后一列的第一个值
+                if len(last_parts) >= 2:
+                    new_row.append(last_parts[0])  # Max (mm)
+                else:
+                    new_row.append(last_mm_cell)
+            else:
+                # 其他表头行，添加占位使列数一致
+                new_row.append(first_cell)
+                new_row.append('')
+                new_row.append(mm_cells[1] if len(mm_cells) > 1 else '')
+                if len(last_parts) >= 2:
+                    new_row.append(last_parts[0])
+                else:
+                    new_row.append(last_mm_cell)
+        elif len(mm_cells) >= 4:
+            # 分开格式，已经是 [Symbol, Min, Nom, Max, ...]
+            new_row = mm_cells[:4]
+        else:
+            # 其他格式，直接保留
+            new_row = mm_cells
+
+        new_table.append(new_row)
+
+    return new_table
+
+def _looks_like_number(s):
+    """检查字符串是否看起来像数字"""
+    try:
+        s = s.replace('-', '').replace('.', '').strip()
+        if s == '':
+            return True  # '-' 也算数字占位符
+        float(s.replace(',', '.'))
+        return True
+    except:
+        return False
 
 def delete_space_row(data):
     """
@@ -957,53 +1167,99 @@ def find_number_col(table):
 def get_data_from_common_table(table):
     data = []
     table = delete_space_row(table)
+
+    # 检测并处理 mm/inch 混合表格，只保留毫米数据
+    table = split_mm_inch_table(table)
+
+    print(f"DEBUG get_data: split后前4行={table[:4]}")
+
     # 找到目标值所在行列，一般会有MIN NOM MAX等标识
     title, Paircols, table = find_MIN_NOM_MAX(table)
+    print(f"DEBUG get_data: title={title}, Paircols={Paircols}")
     if Paircols == []:
         title, Paircols = find_number_col(table)
     tableRows = len(table)
     # print(table)
     # 可能会有分成6列是并列关系的存在
     for cols in Paircols:
-        for i in range(title,tableRows):
-            if cols.__len__() == 3:
-                if 'D1,E1' in table[i][cols[0]-1]:
-                    table[i][cols[0]-1] = table[i][cols[0]-1].replace('D1,E1','D1E1')
+        # 修复：如果cols[0]==0，说明第0列被误识别为数据列
+        # 实际的表格结构可能是：[描述, Symbol, Min, Nom, Max]
+        # 需要从第1列取Symbol，从cols[1:]取Min/Nom/Max
+        if len(cols) == 4 and cols[0] == 0 and len(table[0]) == 5:
+            # 特殊情况：5列表格，第0列是描述，第1列是Symbol，后面3列是Min/Nom/Max
+            # cols = [0, 2, 3, 4]，实际应该取 symbol=1, min=2, nom=3, max=4
+            symbol_col = 1  # Symbol 在第1列
+            min_col = cols[1]  # 2
+            nom_col = cols[2]  # 3
+            max_col = cols[3]  # 4
+            for i in range(title, tableRows):
                 data.append(
                     [
-                        table[i][cols[0]-1], 
-                        table[i][cols[0]], 
-                        table[i][cols[1]], 
-                        table[i][cols[2]]
+                        table[i][symbol_col],
+                        table[i][min_col],
+                        table[i][nom_col],
+                        table[i][max_col]
                     ]
-                    )
-            elif cols.__len__() == 1:
-                
+                )
+        elif len(cols) == 4 and cols[0] == 0:
+            # 其他4列情况
+            symbol_col = cols[0]
+            min_col = cols[1]
+            nom_col = cols[2]
+            max_col = cols[3]
+            for i in range(title, tableRows):
                 data.append(
                     [
-                        table[i][cols[0]-1], 
-                        table[i][cols[0]]
+                        table[i][symbol_col],
+                        table[i][min_col],
+                        table[i][nom_col],
+                        table[i][max_col]
                     ]
-                    )
-            elif cols.__len__() == 2:
-                data.append(
-                    [
-                        table[i][cols[0]-1], 
-                        table[i][cols[0]], 
-                        '',
-                        table[i][cols[1]]
-                    ]
-                    )
-            else:
+                )
+        else:
+            for i in range(title,tableRows):
+                if cols.__len__() == 3:
+                    # 防止cols[0]-1变成-1
+                    symbol_idx = cols[0]-1 if cols[0] > 0 else 0
+                    if 'D1,E1' in table[i][symbol_idx]:
+                        table[i][symbol_idx] = table[i][symbol_idx].replace('D1,E1','D1E1')
                     data.append(
-                    [
-                        table[i][cols[0]-1], 
-                        table[i][cols[0]], 
-                        table[i][cols[1]], 
-                        table[i][cols[2]], 
-                        table[i][cols[3]], 
-                    ]
-                    )
+                        [
+                            table[i][symbol_idx],
+                            table[i][cols[0]],
+                            table[i][cols[1]],
+                            table[i][cols[2]]
+                        ]
+                        )
+                elif cols.__len__() == 1:
+                    symbol_idx = cols[0]-1 if cols[0] > 0 else 0
+                    data.append(
+                        [
+                            table[i][symbol_idx],
+                            table[i][cols[0]]
+                        ]
+                        )
+                elif cols.__len__() == 2:
+                    symbol_idx = cols[0]-1 if cols[0] > 0 else 0
+                    data.append(
+                        [
+                            table[i][symbol_idx],
+                            table[i][cols[0]],
+                            '',
+                            table[i][cols[1]]
+                        ]
+                        )
+                else:
+                    symbol_idx = cols[0]-1 if cols[0] > 0 else 0
+                    data.append(
+                        [
+                            table[i][symbol_idx],
+                            table[i][cols[0]],
+                            table[i][cols[1]],
+                            table[i][cols[2]],
+                            table[i][cols[3]],
+                        ]
+                        )
     count_same = 1
     for index in range(data.__len__()-1):
         if data[index][0] == data[index+1][0]:
@@ -1094,8 +1350,11 @@ def filt_KeyInfo_data(lst):
     return data
 
 def table_checked(table):
+    if (table is None) or (table == []) or (len(table) == 1): return table
+    if len(table[0]) > len(table):
+        return table
     # 遍历前两行
-    for i in range(min(2, len(table))):
+    for i in range(min(4, len(table))):
         row = table[i]
         # 查找包含 MIN, NOM, MAX 的列索引
         for j in range(len(row)):
@@ -1142,6 +1401,28 @@ def keyInfo_checked(key_list):
             except ValueError:
                 return False
         return True
+
+    # 如果有五列且第五列全为字母，则删除最后一列
+    def clean_table_data(key_list):
+        """
+        清理表格数据，移除不符合要求的列
+        """
+        if len(key_list) == 0 or len(key_list[0]) != 5:
+            return key_list
+
+        has_digit = False
+        for row in key_list:
+            if any(ch.isdigit() for ch in row[4]):
+                has_digit = True
+                break
+
+        if not has_digit:
+            key_list = [row[:-1] for row in key_list]
+
+        return key_list
+
+    # 应用清理函数
+    key_list = clean_table_data(key_list)
 
     # 检查所有行是否都符合模式
     if all(is_valid_row(row) for row in key_list):
@@ -1243,29 +1524,31 @@ def add_info_from_KeyInfo(data, KeyInfo,packageType):
         if 'c' in row[0] and data[12][1] == '':
             data[12][1:]  = filt_KeyInfo_data(row[1:])
         # 散热盘宽
-        if row[0] =='E2' and data[11][1] == '':
-            data[11][1:]  = filt_KeyInfo_data(row[1:])
+        if row[0] =='E2' and data[15][1] == '':
+            data[15][1:]  = filt_KeyInfo_data(row[1:])
         # 散热盘长
-        if row[0] =='D2' and data[10][1] == '':
-            data[10][1:]  = filt_KeyInfo_data(row[1:])
+        if row[0] =='D2' and data[14][1] == '':
+            data[14][1:]  = filt_KeyInfo_data(row[1:])
         # 行/列Pin数
-        if (row[0] =='e' or row[0]=='eE' or row[0] == 'e0')and data[9][1] == '':
-            data[9][1:]  = filt_KeyInfo_data(row[1:])
+        if (row[0] =='e' or row[0]=='eE' or row[0] == 'e0')and data[0][1] == '':
+            data[0][1:]  = filt_KeyInfo_data(row[1:])
+        if (row[0] =='e' or row[0]=='eE' or row[0] == 'e0')and data[1][1] == '':
+            data[1][1:]  = filt_KeyInfo_data(row[1:])
         # pin宽
-        if 'b' in row[0] and data[8][1] == '':
-            data[8][1:]  = filt_KeyInfo_data(row[1:])
+        if 'b' in row[0] and data[11][1] == '':
+            data[11][1:]  = filt_KeyInfo_data(row[1:])
         # pin长
-        if 'L' in row[0] and data[7][1] == '':
-            data[7][1:]  = filt_KeyInfo_data(row[1:])
+        if 'L' in row[0] and data[10][1] == '':
+            data[10][1:]  = filt_KeyInfo_data(row[1:])
         # 外围宽
-        if 'E' in row[0] and data[6][1] == '':
-            data[6][1:]  = filt_KeyInfo_data(row[1:])
+        if 'E' in row[0] and data[5][1] == '':
+            data[5][1:]  = filt_KeyInfo_data(row[1:])
         # 外围长
-        if 'D' in row[0] and data[5][1] == '':
-            data[5][1:]  = filt_KeyInfo_data(row[1:])   
-        # 端子高
-        if 'A3' in row[0] and data[4][1] == '':
+        if 'D' in row[0] and data[4][1] == '':
             data[4][1:]  = filt_KeyInfo_data(row[1:])
+        # 端子高
+        if 'A3' in row[0] and data[12][1] == '':
+            data[12][1:]  = filt_KeyInfo_data(row[1:])
         # 支撑高
         if ('A1' in row[0]) and data[3][1] == '':
             data[3][1:]  = filt_KeyInfo_data(row[1:])
@@ -1273,12 +1556,12 @@ def add_info_from_KeyInfo(data, KeyInfo,packageType):
         if row[0]=='A'and data[2][1] == '':
             data[2][1:] = filt_KeyInfo_data(row[1:])
         # 实体宽
-        if 'E1' in row[0] and data[1][1] == '':
+        if 'E1' in row[0] and data[7][1] == '':
             # row[1:] = [f"{float(num)/10:.1f}" if int(num) > 100 else num for num in row[1:]]
-            data[1][1:] = filt_KeyInfo_data(row[1:])
+            data[7][1:] = filt_KeyInfo_data(row[1:])
         # 实体长
-        if 'D1' in row[0] and data[0][1] == '':
-            data[0][1:] = filt_KeyInfo_data(row[1:])
+        if 'D1' in row[0] and data[6][1] == '':
+            data[6][1:] = filt_KeyInfo_data(row[1:])
     if packageType == 'BGA':
         # print(KeyInfo)
         for row in KeyInfo:
@@ -1298,20 +1581,22 @@ def add_info_from_KeyInfo(data, KeyInfo,packageType):
             # print(row)
             row[0] = row[0].replace('_','')
             if row[0] == '0' or row[0] == '9' or row[0] == 'Φb':
-                row[0] = 'b'
+               row[0] = 'b'
             row[0] = row[0].split(',')[0].replace(' ','')
             row = [x.replace('.BSC','').replace(',BSC','').replace('8SC','') for x in row]
             # Pin_Pitch
-            if 'e' in row[0] and data[10][1] == '':
-                data[10][1:] = filt_KeyInfo_data(row[1:])
-            if 'e' in row[0] and data[9][1] == '':
-                data[9][1:] = filt_KeyInfo_data(row[1:])
+            if 'e' in row[0] and data[0][1] == '':
+                data[0][1:] = filt_KeyInfo_data(row[1:])
+            if 'e' in row[0] and data[1][1] == '':
+                data[1][1:] = filt_KeyInfo_data(row[1:])
             # 引脚的厚度
-            if ('c' in row[0]) or ('C' in row[0]) and data[12][1] == '':
+            if 'A3' in row[0] and data[12][1] == '':
+                data[12][1:] = filt_KeyInfo_data(row[1:])
+            if ('C' in row[0]) or ('c' in row[0]) and data[12][1] == '':
                 data[12][1:]  = filt_KeyInfo_data(row[1:])
             # 散热盘长
-            if row[0] =='D2' and data[11][1] == '':
-                data[11][1:]  = filt_KeyInfo_data(row[1:])
+            if row[0] =='D2' and data[14][1] == '':
+                data[14][1:]  = filt_KeyInfo_data(row[1:])
             # # 列Pin数
             # if row[0] =='eD' and data[10][1] == '':
             #     data[10][1:]  = filt_KeyInfo_data(row[1:])
@@ -1319,33 +1604,33 @@ def add_info_from_KeyInfo(data, KeyInfo,packageType):
             # if (row[0]=='eE' or row[0] == 'e0')and data[9][1] == '':
             #     data[9][1:]  = filt_KeyInfo_data(row[1:])
             # 列数
-            if ('MD' in row[0] or row[0] == 'M') and data[8][1] == '':
-                data[8][1:] = filt_KeyInfo_data(row[1:])
-            # 行数
-            if ('ME' in row[0] or row[0] == 'M') and data[7][1] == '':
-                data[7][1:] = filt_KeyInfo_data(row[1:])
+            # if ('MD' in row[0] or row[0] == 'M') and data[8][1] == '':
+            #     data[8][1:] = filt_KeyInfo_data(row[1:])
+            # # 行数
+            # if ('ME' in row[0] or row[0] == 'M') and data[7][1] == '':
+            #     data[7][1:] = filt_KeyInfo_data(row[1:])
             # pin宽
-            if 'b' in row[0] and data[6][1] == '':
-                data[6][1:]  = filt_KeyInfo_data(row[1:])
+            if 'b' in row[0] and data[11][1] == '':
+                data[11][1:]  = filt_KeyInfo_data(row[1:])
             # pin长
-            if 'L' in row[0] and data[5][1] == '':
-                data[5][1:]  = filt_KeyInfo_data(row[1:])
+            if 'L' in row[0] and data[10][1] == '':
+                data[10][1:]  = filt_KeyInfo_data(row[1:])
             # 端子高
-            if 'A3' in row[0] and data[4][1] == '':
-                data[4][1:]  = filt_KeyInfo_data(row[1:])
+            # if 'A3' in row[0] and data[4][1] == '':
+            #     data[4][1:]  = filt_KeyInfo_data(row[1:])
             # 支撑高
-            if 'A1' in row[0] and data[3][1] == '':
-                data[3][1:]  = filt_KeyInfo_data(row[1:])
+            if 'A1' in row[0] and data[5][1] == '':
+                data[5][1:]  = filt_KeyInfo_data(row[1:])
             # 实体高
-            if row[0]=='A'and data[2][1] == '':
-                data[2][1:] = filt_KeyInfo_data(row[1:])
+            if row[0]=='A'and data[4][1] == '':
+                data[4][1:] = filt_KeyInfo_data(row[1:])
             # 实体宽
-            if 'E' in row[0] and data[1][1] == '':
+            if 'E' in row[0] and data[8][1] == '':
                 # row[1:] = [f"{float(num)/10:.1f}" if int(num) > 100 else num for num in row[1:]]
-                data[1][1:]  = filt_KeyInfo_data(row[1:])
+                data[8][1:]  = filt_KeyInfo_data(row[1:])
             # 实体长
-            if 'D' in row[0] and data[0][1] == '':
-                data[0][1:]  = filt_KeyInfo_data(row[1:])
+            if 'D' in row[0] and data[7][1] == '':
+                data[7][1:]  = filt_KeyInfo_data(row[1:])
     elif packageType == 'SON' or packageType == 'SOP':
         for row in KeyInfo:
             row = [s.strip() for s in row]

@@ -5,7 +5,7 @@ import onnxruntime as rt
 
 from package_core.PackageExtract.BGA_Function.Pin_process.predict import extract_pin_coords, extract_border_coords, \
     process_single_image
-from package_core.PackageExtract.yolox_onnx_py.model_paths import model_path
+from package_core.PackageExtract.yolox_onnx_py.model_paths import model_path, result_path
 
 
 def classify_pins_by_border(pin_coords, border_coords):
@@ -275,9 +275,191 @@ def get_QFN_res(img_path):
     )
     return res
 
+
+def get_adjacent_pin_pairs(classified_pins):
+    """
+    获取X方向和Y方向上最佳的两个相邻PIN坐标
+    :param classified_pins: classify_pins_by_border 返回的字典
+    :return: 字典 {'x_pair': [pin1, pin2], 'y_pair': [pin1, pin2]}，如果无法获取则为None
+    """
+    result = {
+        'x_pair': None,
+        'y_pair': None
+    }
+
+    # --- 处理 X 方向 (从 Top 或 Bottom 中取) ---
+    # 优先选择检测到PIN数量较多的一边，数据更可靠
+    top_cnt = len(classified_pins['top']['pins'])
+    btm_cnt = len(classified_pins['bottom']['pins'])
+
+    target_edge_x = 'top' if top_cnt >= btm_cnt else 'bottom'
+    pins_x = classified_pins[target_edge_x]['pins']
+
+    # 必须至少有2个PIN才能找相邻
+    if len(pins_x) >= 2:
+        # 将 box 和 center 组合在一起以便排序
+        # box: [x1, y1, x2, y2], center: (cx, cy)
+        combined_x = list(zip(pins_x, classified_pins[target_edge_x]['centers']))
+        # 按中心点 x 坐标排序 (从左到右)
+        combined_x.sort(key=lambda k: k[1][0])
+
+        # 为了精度，尽量取靠近中间的两个相邻PIN（避免镜头边缘畸变）
+        mid_idx = len(combined_x) // 2
+        # 如果是偶数长度，取 mid-1 和 mid；如果是奇数，取 mid 和 mid+1
+        # 这里简化处理：只要不是最后两个即可，取中间最稳妥
+        idx1 = max(0, mid_idx - 1)
+        idx2 = idx1 + 1
+
+        result['x_pair'] = [combined_x[idx1][0], combined_x[idx2][0]]
+        print(f"X方向取值 ({target_edge_x}边): 索引 {idx1} 和 {idx2}")
+
+    # --- 处理 Y 方向 (从 Left 或 Right 中取) ---
+    left_cnt = len(classified_pins['left']['pins'])
+    right_cnt = len(classified_pins['right']['pins'])
+
+    target_edge_y = 'left' if left_cnt >= right_cnt else 'right'
+    pins_y = classified_pins[target_edge_y]['pins']
+
+    if len(pins_y) >= 2:
+        combined_y = list(zip(pins_y, classified_pins[target_edge_y]['centers']))
+        # 按中心点 y 坐标排序 (从上到下)
+        combined_y.sort(key=lambda k: k[1][1])
+
+        mid_idx = len(combined_y) // 2
+        idx1 = max(0, mid_idx - 1)
+        idx2 = idx1 + 1
+
+        result['y_pair'] = [combined_y[idx1][0], combined_y[idx2][0]]
+        print(f"Y方向取值 ({target_edge_y}边): 索引 {idx1} 和 {idx2}")
+
+    return result
+def visualize_selected_pairs(image_path, border_coords, classified_pins, adj_pairs, output_path):
+    """
+    可视化：在原图上标出Border、所有PIN，并高亮显示用于计算Pitch的相邻PIN对及其间距。
+    """
+    img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        print(f"警告：无法读取图像用于可视化 {image_path}")
+        return
+
+    # --- 定义样式 ---
+    colors = {
+        'border': (0, 0, 255),        # 红色: Border
+        'background_pin': (100, 100, 100), # 灰色: 普通PIN背景
+        'x_highlight': (255, 255, 0), # 青色: X方向选中对
+        'y_highlight': (255, 0, 255), # 品红色: Y方向选中对
+        'connector': (0, 255, 255)    # 黄色: 连接线
+    }
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    thickness_thin = 1
+    thickness_thick = 2
+
+    # --- 1. 绘制基础 Border ---
+    left, top, right, bottom = map(int, border_coords)
+    cv2.rectangle(img, (left, top), (right, bottom), colors['border'], thickness_thick)
+    cv2.putText(img, 'Border', (left, top - 10), font, font_scale, colors['border'], thickness_thick)
+
+    # --- 2. 绘制所有 PIN 作为背景 (细灰线) ---
+    for edge in classified_pins:
+        for pin in classified_pins[edge]['pins']:
+            x1, y1, x2, y2 = map(int, pin)
+            cv2.rectangle(img, (x1, y1), (x2, y2), colors['background_pin'], thickness_thin)
+
+    # 辅助函数：获取PIN中心点
+    get_center = lambda p: (int((p[0] + p[2]) / 2), int((p[1] + p[3]) / 2))
+
+    # --- 3. 高亮 X 方向选中对 ---
+    if adj_pairs['x_pair']:
+        p1, p2 = adj_pairs['x_pair']
+        c1 = get_center(p1)
+        c2 = get_center(p2)
+
+        # 绘制高亮框
+        cv2.rectangle(img, (int(p1[0]), int(p1[1])), (int(p1[2]), int(p1[3])), colors['x_highlight'], thickness_thick)
+        cv2.rectangle(img, (int(p2[0]), int(p2[1])), (int(p2[2]), int(p2[3])), colors['x_highlight'], thickness_thick)
+
+        # 绘制连接线和中心点
+        cv2.line(img, c1, c2, colors['connector'], thickness=2)
+        cv2.circle(img, c1, 4, colors['x_highlight'], -1)
+        cv2.circle(img, c2, 4, colors['x_highlight'], -1)
+
+        # 计算并标注 Pitch
+        x_pitch = abs(c1[0] - c2[0])
+        text_pos = (int((c1[0] + c2[0]) / 2) - 40, int((c1[1] + c2[1]) / 2) - 20)
+        cv2.putText(img, f"X-Pitch:{x_pitch:.1f}", text_pos, font, font_scale, colors['connector'], thickness_thick)
+
+    # --- 4. 高亮 Y 方向选中对 ---
+    if adj_pairs['y_pair']:
+        p1, p2 = adj_pairs['y_pair']
+        c1 = get_center(p1)
+        c2 = get_center(p2)
+
+        # 绘制高亮框
+        cv2.rectangle(img, (int(p1[0]), int(p1[1])), (int(p1[2]), int(p1[3])), colors['y_highlight'], thickness_thick)
+        cv2.rectangle(img, (int(p2[0]), int(p2[1])), (int(p2[2]), int(p2[3])), colors['y_highlight'], thickness_thick)
+
+        # 绘制连接线和中心点
+        cv2.line(img, c1, c2, colors['connector'], thickness=2)
+        cv2.circle(img, c1, 4, colors['y_highlight'], -1)
+        cv2.circle(img, c2, 4, colors['y_highlight'], -1)
+
+        # 计算并标注 Pitch
+        y_pitch = abs(c1[1] - c2[1])
+        # 文字位置稍微错开一点，防止和X重叠
+        text_pos = (int((c1[0] + c2[0]) / 2) + 10, int((c1[1] + c2[1]) / 2))
+        cv2.putText(img, f"Y-Pitch:{y_pitch:.1f}", text_pos, font, font_scale, colors['connector'], thickness_thick)
+
+    # 保存结果
+    # cv2.imencode('.png', img)[1].tofile(output_path)
+    # print(f"可视化结果已保存至：{output_path}")
+    # 如果需要在运行时的电脑上查看，取消下面注释
+    # cv2.imshow("Selected Pairs Visualization", img)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
+
+
+def save_simple_txt(adj_pairs, output_path):
+    """
+    按指定格式保存，并自动创建不存在的目录：
+    X: [x1,y1,x2,y2],[x1,y1,x2,y2]
+    Y: [x1,y1,x2,y2],[x1,y1,x2,y2]
+    """
+
+    def fmt_pin(p):
+        return "[" + ", ".join([f"{v:.2f}" for v in p]) + "]"
+
+    try:
+        # === 新增逻辑：检查并创建目录 ===
+        dir_name = os.path.dirname(output_path)
+        # 如果路径中有目录部分，且该目录不存在，则创建
+        if dir_name and not os.path.exists(dir_name):
+            os.makedirs(dir_name, exist_ok=True)
+            print(f"目录不存在，已自动创建: {dir_name}")
+        # ==============================
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            # --- 写入 X ---
+            if adj_pairs['x_pair']:
+                p1_str = fmt_pin(adj_pairs['x_pair'][0])
+                p2_str = fmt_pin(adj_pairs['x_pair'][1])
+                f.write(f"X: {p1_str},{p2_str}\n")
+            else:
+                f.write("X: None\n")
+
+            # --- 写入 Y ---
+            if adj_pairs['y_pair']:
+                p1_str = fmt_pin(adj_pairs['y_pair'][0])
+                p2_str = fmt_pin(adj_pairs['y_pair'][1])
+                f.write(f"Y: {p1_str},{p2_str}\n")
+
+        print(f"TXT 已保存至: {output_path}")
+    except Exception as e:
+        print(f"保存失败: {str(e)}")
+
 def QFN_extract_pins(img_path):
     try:
-        img_path = img_path
         res = get_QFN_res(img_path)
         pin_coords = extract_pin_coords(res)
         border_coords = extract_border_coords(res)
@@ -302,12 +484,35 @@ def QFN_extract_pins(img_path):
         print(f"最终结果：X={X}, Y={Y}")
 
 
-        # 打印分边结果
+        # # 打印分边结果
         # print("\n=== PIN分边结果 ===")
         # for edge in ['top', 'bottom', 'left', 'right', 'invalid']:
         #     count = len(classified_pins[edge]['pins'])
         #     print(f"{edge}边PIN（共{count}个）：")
         #     print(classified_pins[edge]['pins'])
+
+        # === 获取相邻PIN坐标 ===
+        adj_pairs = get_adjacent_pin_pairs(classified_pins)
+        txt_output_path = result_path("Package_view","pin","QFN_adjacent_pins.txt")
+        save_simple_txt(adj_pairs, txt_output_path)
+
+        # # 简单的打印 Pitch 信息 (可选)
+        # if adj_pairs['x_pair']:
+        #     p1, p2 = adj_pairs['x_pair']
+        #     x_pitch = abs(((p1[0] + p1[2]) / 2) - ((p2[0] + p2[2]) / 2))
+        #     print(f"  [Info] 估算 X-Pitch: {x_pitch:.2f} pixels")
+        # if adj_pairs['y_pair']:
+        #     p1, p2 = adj_pairs['y_pair']
+        #     y_pitch = abs(((p1[1] + p1[3]) / 2) - ((p2[1] + p2[3]) / 2))
+        #     print(f"  [Info] 估算 Y-Pitch: {y_pitch:.2f} pixels")
+
+        # === 新增：调用可视化 ===
+        # 定义可视化图片保存路径 (例如保存到原图片目录下，文件名加后缀)
+        # vis_output_path = os.path.splitext(img_path)[0] + "_visualized_pairs.png"
+        # 如果想保存到特定目录：
+        # vis_output_path = os.path.join("你的输出目录", os.path.basename(img_path).replace(".png", "_vis.png"))
+
+        # visualize_selected_pairs(img_path, border_coords, classified_pins, adj_pairs, vis_output_path)
 
         # 可视化分边结果
         # visualization_output_path = os.path.join("pin_classification_visualization.png")
@@ -324,7 +529,7 @@ def QFN_extract_pins(img_path):
 
 if __name__ == "__main__":
     # 获取模型推理结果和路径信息
-    img_path = r"D:\workspace\PackageWizard1.1\Result\Package_view\page\bottom.jpg"
+    img_path = r"D:\HuaweiMoveData\Users\LNQ\Desktop\训练数据\QFN\bottom\JPEGImages\6.png"
 
     X,Y = QFN_extract_pins(img_path)
 

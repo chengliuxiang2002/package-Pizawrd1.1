@@ -19,6 +19,16 @@ import pyclipper
 from shapely.geometry import Polygon
 from PIL import Image,ImageDraw
 
+# 导入性能分析工具
+try:
+    from package_core.profiler import model_timer, profiler
+except ImportError:
+    from contextlib import contextmanager
+    @contextmanager
+    def model_timer(name, extra_info=None):
+        yield
+    profiler = None
+
 try:
     from package_core.PackageExtract.yolox_onnx_py.model_paths import ocr_model_path
 except ModuleNotFoundError:  # pragma: no cover - 兼容脚本直接运行
@@ -361,18 +371,67 @@ _GLOBAL_SESSIONS = {
     'rec_large': None
 }
 
+# ==================== ONNX Runtime优化配置 ====================
+ONNX_OPTIMIZATION_CONFIG = {
+    'intra_op_num_threads': 4,      # 单个算子内部并行线程数
+    'inter_op_num_threads': 1,       # 算子间并行线程数
+    'graph_optimization_level': 'basic',  # 图优化级别: 'disable', 'basic', 'extended', 'all'
+    'enable_mem_pattern': True,      # 内存模式优化
+    'enable_cpu_mem_arena': True,    # CPU内存池
+}
+
+
+def create_optimized_session_options():
+    """创建优化的Session配置"""
+    sess_options = onnxruntime.SessionOptions()
+
+    # 设置图优化级别
+    opt_level_map = {
+        'disable': onnxruntime.GraphOptimizationLevel.ORT_DISABLE_ALL,
+        'basic': onnxruntime.GraphOptimizationLevel.ORT_ENABLE_BASIC,
+        'extended': onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED,
+        'all': onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL,
+    }
+    sess_options.graph_optimization_level = opt_level_map.get(
+        ONNX_OPTIMIZATION_CONFIG['graph_optimization_level'],
+        onnxruntime.GraphOptimizationLevel.ORT_ENABLE_BASIC
+    )
+
+    # 设置线程数
+    sess_options.intra_op_num_threads = ONNX_OPTIMIZATION_CONFIG['intra_op_num_threads']
+    sess_options.inter_op_num_threads = ONNX_OPTIMIZATION_CONFIG['inter_op_num_threads']
+
+    # 内存优化
+    sess_options.enable_mem_pattern = ONNX_OPTIMIZATION_CONFIG['enable_mem_pattern']
+    sess_options.enable_cpu_mem_arena = ONNX_OPTIMIZATION_CONFIG['enable_cpu_mem_arena']
+
+    # 执行模式：顺序执行（更稳定）
+    sess_options.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+
+    return sess_options
+
 
 def get_global_session(model_path, session_key):
-    """获取或初始化全局 Session"""
+    """获取或初始化全局 Session（带优化配置）"""
     global _GLOBAL_SESSIONS
     if _GLOBAL_SESSIONS.get(session_key) is None:
         print(f"Loading ONNX model from {model_path} ...")
+
         # 显式指定 providers，优先使用 CUDA，否则 CPU
         providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
         if 'CUDAExecutionProvider' not in onnxruntime.get_available_providers():
             providers = ['CPUExecutionProvider']
 
-        _GLOBAL_SESSIONS[session_key] = onnxruntime.InferenceSession(model_path, providers=providers)
+        # 使用优化的Session配置
+        sess_options = create_optimized_session_options()
+
+        _GLOBAL_SESSIONS[session_key] = onnxruntime.InferenceSession(
+            model_path,
+            sess_options=sess_options,
+            providers=providers
+        )
+        print(f"[优化] Session已创建，Provider: {_GLOBAL_SESSIONS[session_key].get_providers()[0]}")
+
     return _GLOBAL_SESSIONS[session_key]
 
 class det_rec_functions(object):
@@ -546,7 +605,11 @@ class det_rec_functions(object):
         img_part = np.expand_dims(img_part, axis=0)
         shape_part_list = np.expand_dims(shape_part_list, axis=0)
         inputs_part = {self.onet_det_session.get_inputs()[0].name: img_part}
-        outs_part = self.onet_det_session.run(None, inputs_part)
+
+        # 使用model_timer记录DBNet检测推理时间
+        with model_timer("DBNet-检测", {"input_shape": str(img_part.shape)}):
+            outs_part = self.onet_det_session.run(None, inputs_part)
+
         post_res_part = self.det_re_process_op(outs_part[0], shape_part_list)
         dt_boxes_part = post_res_part[0]['points']
         dt_boxes_part = self.filter_tag_det_res(dt_boxes_part, img_ori.shape)
@@ -593,16 +656,20 @@ class det_rec_functions(object):
         img = self.resize_norm_img(img, w * 1.0 / h)
         img = img[np.newaxis, :]
         inputs = {onnx_model.get_inputs()[0].name: img}
-        outs = onnx_model.run(None, inputs)
+
+        # 使用model_timer记录SVTR识别推理时间
+        with model_timer("SVTR-识别", {"input_shape": str(img.shape)}):
+            outs = onnx_model.run(None, inputs)
+
         result = process_op(outs[0])
         return result
 
-    def recognition_img(self, dt_boxes,Is_crop):
+    def recognition_img(self, dt_boxes, Is_crop):
         """根据检测框批量裁剪并完成文本识别。"""
         img_ori = self.img
         img = img_ori.copy()
-        ### 识别过程
-        ## 根据bndbox得到小图片
+
+        # 根据检测框裁剪小图片
         img_list = []
         i = 0
         for box in dt_boxes:
@@ -614,7 +681,7 @@ class det_rec_functions(object):
                 i += 1
             img_list.append(img_crop)
 
-        ## 识别小图片
+        # 逐张识别
         results = []
         results_info = []
         for pic in img_list:

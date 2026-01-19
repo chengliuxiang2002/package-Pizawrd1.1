@@ -10,6 +10,15 @@ import json
 from PIL import Image
 from package_core.PDF_Processed.ocr.det_text import Run_onnx1
 
+# 导入性能分析工具
+try:
+    from package_core.profiler import model_timer
+except ImportError:
+    from contextlib import contextmanager
+    @contextmanager
+    def model_timer(name, extra_info=None):
+        yield
+
 
 # ====================== 1. 配置参数 (Centralized Configuration) ======================
 
@@ -113,7 +122,11 @@ class RTDETR_Detector:
         image_tensor, original_size = preprocess_image(original_image, self.config.INPUT_SIZE)
         ort_inputs = {self.input_names[0]: image_tensor,
                       self.input_names[1]: np.array([[self.config.INPUT_SIZE, self.config.INPUT_SIZE]], dtype=np.int64)}
-        outputs = self.session.run(None, ort_inputs)
+
+        # 使用model_timer记录RT-DETR推理时间
+        with model_timer("RT-DETR推理", {"input_size": f"{self.config.INPUT_SIZE}x{self.config.INPUT_SIZE}"}):
+            outputs = self.session.run(None, ort_inputs)
+
         boxes, scores, labels = postprocess_results(outputs, original_size, self.config.INPUT_SIZE,
                                                     self.config.CONF_THRESHOLD)
 

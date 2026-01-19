@@ -1,10 +1,8 @@
 #F2.分装图预处理流程模块
-import os.path
-from PIL import ImageEnhance
-import matplotlib
 import copy
-import matplotlib.pyplot as plt
-from package_core.PackageExtract.BGA_Function import f4_pipeline_runner
+import os.path
+import matplotlib
+from package_core.PackageExtract.BGA_Function import BGA_extract
 from package_core.PackageExtract.BGA_Function.Pin_process.QFN.QFN_extract_pins import QFN_extract_pins
 from package_core.PackageExtract.BGA_Function.Pin_process.QFP.QFP_extract_pins import QFP_extract_pins
 from package_core.PackageExtract.BGA_Function.Pin_process.SON.SON_extract_pins import SON_extract_pins
@@ -40,6 +38,7 @@ SEGMENT_SIDE = result_path('Package_view', 'page', 'side.jpg')
 SEGMENT_BOTTOM = result_path('Package_view', 'page', 'bottom.jpg')
 SEGMENT_TOP = result_path('Package_view', 'page', 'top.jpg')
 DETR_IMG = result_path('PDF_extract', 'detr_img')
+PIN_NUM_PATH = result_path('Package_view', 'pin','pin_num.txt')
 
 BGA_TABLE = ['Pitch x (el)', 'Pitch y (e)', 'Number of pins along X', 'Number of pins along Y',
              'Package Height (A)', 'Standoff (A1)', 'Body X (E)', 'Body Y (D)', 'Edge Fillet Radius',
@@ -375,40 +374,75 @@ def package_indentify(package_type, current_page):
     if package_type == 'QFP':
         out_put = QFP_extract.extract_package(package_type, current_page)
     elif package_type == 'QFN':
-        out_put = QFN_extract.extract_QFN(package_type, current_page)
+        out_put = QFN_extract.run_f4_pipeline(destination_folder_path, package_type)
     elif package_type == 'SOP':
-        out_put = SOP_extract.extract_SOP(package_type, current_page)
+        # out_put = SOP_extract.extract_SOP(package_type, current_page)
+        out_put = SOP_extract.run_f4_pipeline_SOP(destination_folder_path, package_type, current_page)
     elif package_type == 'SON' or package_type == 'DFN' or package_type == 'DFN_SON':
         out_put = SON_extract.extract_SON(package_type, current_page)
     elif package_type == 'BGA':
-        out_put = f4_pipeline_runner.run_f4_pipeline(destination_folder_path, package_type)
+        out_put = BGA_extract.run_f4_pipeline(destination_folder_path, package_type)
     else:
         print("未定义的封装类型")
         out_put = []
     return out_put
 
 
+def write_xy_to_txt(x, file_path, y=None, encoding="utf-8"):
+    """
+    将数据写入txt文件，支持传入1个或2个参数：
+    - 传1个数据参数（x）：仅写入第一行
+    - 传2个数据参数（x、y）：第一个参数写第一行，第二个参数写第二行
+    新增功能：路径不存在时自动创建对应的目录
+    :param x: 要写入第一行的内容（必选参数，任意数据类型）
+    :param file_path: 输出文件的路径和名称（必选参数，无默认值）
+    :param y: 要写入第二行的内容（可选参数，任意数据类型，默认值为None）
+    :param encoding: 文件的编码格式（可选参数，默认值为"utf-8"）
+    """
+    try:
+        # 提取文件路径的目录部分（比如"a/b/c.txt"的目录是a/b"）
+        dir_path = os.path.dirname(file_path)
+        # 如果目录路径不为空（即file_path不是当前目录的文件）且目录不存在，则创建目录
+        if dir_path and not os.path.exists(dir_path):
+            # os.makedirs可以创建多级目录（比如a/b/c），exist_ok=True避免目录已存在时报错
+            os.makedirs(dir_path, exist_ok=True)
+        # 原有写入文件的逻辑
+        with open(file_path, "w", encoding=encoding) as f:
+            f.write(f"{x}\n")
+            if y is not None:
+                f.write(f"{y}\n")
+        print(f"成功写入文件：{file_path}")
+    except Exception as e:
+        print(f"写入文件时发生错误：{e}")
+
+
+
 def extract_BGA_pins():
     # 提取BGA引脚数量
     pin_num_x_serial, pin_num_y_serial, loss_pin,loss_color = extract_BGA_PIN()
+    write_xy_to_txt(pin_num_x_serial,PIN_NUM_PATH, pin_num_y_serial)
 
     return pin_num_x_serial, pin_num_y_serial, loss_pin,loss_color
 
 def extract_QFP_pins():
     # 提取QFP行列引脚数量
     X, Y = QFP_extract_pins(SEGMENT_BOTTOM)
+    write_xy_to_txt(X,PIN_NUM_PATH, Y)
     return X, Y
 def extract_QFN_pins():
     # 提取QFN行列引脚数量
     X, Y = QFN_extract_pins(SEGMENT_BOTTOM)
+    write_xy_to_txt(X,PIN_NUM_PATH, Y)
     return X, Y
 def extract_SOP_pins():
     # 提取SOP引脚总数
     sum = SOP_extract_pins(SEGMENT_BOTTOM)
+    write_xy_to_txt(sum,PIN_NUM_PATH)
     return sum
 def extract_SON_pins():
     # 提取SON引脚总数
     sum = SON_extract_pins(SEGMENT_BOTTOM)
+    write_xy_to_txt(sum,PIN_NUM_PATH)
     return sum
 
 # 提供给迪浩的代码借口

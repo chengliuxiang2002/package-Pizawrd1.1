@@ -13,21 +13,22 @@ def calculate_iou(box1, box2):
     y1_inter = max(box1[1], box2[1])
     x2_inter = min(box1[2], box2[2])
     y2_inter = min(box1[3], box2[3])
-    
+
     # 计算交集面积
     inter_area = max(0, x2_inter - x1_inter) * max(0, y2_inter - y1_inter)
-    
+
     # 计算各自面积
     area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
     area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-    
+
     # 计算并集面积
     union_area = area1 + area2 - inter_area
-    
+
     # 计算IoU
     iou = inter_area / union_area if union_area > 0 else 0
-    
+
     return iou
+
 
 def calculate_overlap_ratio(box1, box2):
     """
@@ -39,19 +40,20 @@ def calculate_overlap_ratio(box1, box2):
     y1_inter = max(box1[1], box2[1])
     x2_inter = min(box1[2], box2[2])
     y2_inter = min(box1[3], box2[3])
-    
+
     # 计算交集面积
     inter_area = max(0, x2_inter - x1_inter) * max(0, y2_inter - y1_inter)
-    
+
     # 计算各自面积
     area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
     area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-    
+
     # 计算重叠比例
     ratio1 = inter_area / area1 if area1 > 0 else 0  # box1在box2中的比例
     ratio2 = inter_area / area2 if area2 > 0 else 0  # box2在box1中的比例
-    
+
     return ratio1, ratio2
+
 
 def is_inside(box_small, box_large, threshold=0.8):
     """
@@ -61,15 +63,17 @@ def is_inside(box_small, box_large, threshold=0.8):
     ratio_in_large, _ = calculate_overlap_ratio(box_small, box_large)
     return ratio_in_large >= threshold
 
+
 def is_center_inside(box_small, box_large):
     """
     检查小框的中心点是否在大框内部
     """
     center_x = (box_small[0] + box_small[2]) / 2
     center_y = (box_small[1] + box_small[3]) / 2
-    
-    return (box_large[0] <= center_x <= box_large[2] and 
+
+    return (box_large[0] <= center_x <= box_large[2] and
             box_large[1] <= center_y <= box_large[3])
+
 
 def is_mostly_inside(box_small, box_large, threshold=0.7):
     """
@@ -77,6 +81,7 @@ def is_mostly_inside(box_small, box_large, threshold=0.7):
     """
     ratio_in_large, _ = calculate_overlap_ratio(box_small, box_large)
     return ratio_in_large >= threshold
+
 
 def expand_box(box, expand_pixels=5):
     """
@@ -89,6 +94,7 @@ def expand_box(box, expand_pixels=5):
         box[3] + expand_pixels
     ]
 
+
 def calculate_match_score(dbnet_box, serial_box, expanded_serial_box=None):
     """
     计算小框与大框的匹配分数
@@ -96,16 +102,16 @@ def calculate_match_score(dbnet_box, serial_box, expanded_serial_box=None):
     """
     # 基础IoU
     iou = calculate_iou(dbnet_box, serial_box)
-    
+
     # 重叠比例
     ratio_in_serial, _ = calculate_overlap_ratio(dbnet_box, serial_box)
-    
+
     # 中心点是否在内部
     center_inside = is_center_inside(dbnet_box, serial_box)
-    
+
     # 是否大部分在内部
     mostly_inside = is_mostly_inside(dbnet_box, serial_box)
-    
+
     # 扩展边界匹配
     if expanded_serial_box:
         iou_expanded = calculate_iou(dbnet_box, expanded_serial_box)
@@ -117,33 +123,34 @@ def calculate_match_score(dbnet_box, serial_box, expanded_serial_box=None):
         ratio_in_expanded = 0
         center_inside_expanded = False
         mostly_inside_expanded = False
-    
+
     # 计算综合匹配分数
     score = 0
-    
+
     # IoU权重最高
     score += iou * 0.3
-    
+
     # 内部比例也很重要
     score += ratio_in_serial * 0.3
-    
+
     # 扩展边界匹配
     score += iou_expanded * 0.15
-    
+
     # 中心点匹配
     if center_inside or center_inside_expanded:
         score += 0.1
-    
+
     # 大部分在内部
     if mostly_inside or mostly_inside_expanded:
         score += 0.15
-    
+
     return score
+
 
 def PINnum_find_matching_boxes(L3):
     """
     在dbnet_data中寻找与yolox_serial_num外框重合的个体，使用更严格的匹配策略
-    
+
     Args:
         dbnet_data: list of [x1, y1, x2, y2], dbnet识别到的文本框
         yolox_serial_num: list of [x1, y1, x2, y2], YOLOX识别的PIN序号外框
@@ -153,7 +160,7 @@ def PINnum_find_matching_boxes(L3):
         use_expanded_check: 是否使用扩展边界检查
         expand_pixels: 扩展边界像素数
         min_match_score: 最小匹配分数阈值
-    
+
     Returns:
         new_dbnet_data: 剔除已匹配框后的dbnet_data
         new_yolox_serial_num: 匹配的PIN序号外框信息列表，按指定字典结构
@@ -255,7 +262,7 @@ def PINnum_find_matching_boxes(L3):
                 if match_found:
                     matched_indices.add(dbnet_idx)
                     new_yolox_serial_num[best_match_large_idx]['small_boxes'].append(dbnet_box)
-                    print(f"小框 {dbnet_idx} -> 大框 {best_match_large_idx+1}: {match_reason}")
+                    print(f"小框 {dbnet_idx} -> 大框 {best_match_large_idx + 1}: {match_reason}")
                 else:
                     print(f"小框 {dbnet_idx} 未匹配任何大框: 最高分数={best_match_score:.4f}, 最高IoU={best_match_details['iou']:.4f}, 内部比例={best_match_details['ratio_in_serial']:.4f}")
             else:
@@ -267,11 +274,11 @@ def PINnum_find_matching_boxes(L3):
         for i, matched_info in enumerate(new_yolox_serial_num):
             count = len(matched_info['small_boxes'])
             total_matched += count
-            print(f"大框 {i+1} 匹配到 {count} 个小框")
+            print(f"大框 {i + 1} 匹配到 {count} 个小框")
             for j, small_box in enumerate(matched_info['small_boxes']):
                 iou = calculate_iou(small_box, matched_info['location'])
                 ratio, _ = calculate_overlap_ratio(small_box, matched_info['location'])
-                print(f"  小框 {j+1}: IoU={iou:.4f}, 内部比例={ratio:.4f}")
+                print(f"  小框 {j + 1}: IoU={iou:.4f}, 内部比例={ratio:.4f}")
 
         # 构建剔除已匹配框后的dbnet_data
         new_dbnet_data = [box for idx, box in enumerate(dbnet_data) if idx not in matched_indices]
@@ -292,19 +299,21 @@ def PINnum_find_matching_boxes(L3):
                     ratio_in_serial, _ = calculate_overlap_ratio(box, serial_box)
                     center_inside = is_center_inside(box, serial_box)
 
-                    print(f"    与 PIN 外框 {i+1}: IoU={iou:.4f}, 重叠比例={ratio_in_serial:.4f}, 中心点在内={center_inside}")
+                    print(f"    与 PIN 外框 {i + 1}: IoU={iou:.4f}, 重叠比例={ratio_in_serial:.4f}, 中心点在内={center_inside}")
 
-        # recite_data(L3, dbnet_key, new_dbnet_data)
+        recite_data(L3, f"{view}_dbnet_data_back", new_dbnet_data)
         # recite_data(L3, yolox_serial_num_key, new_yolox_serial_num)
         recite_data(L3, f"{view}_pin_match_results", new_yolox_serial_num)
 
     return L3
 
+
 # 辅助函数：检查两个框是否有任何重叠
 def has_overlap(box1, box2):
     """检查两个框是否有任何重叠"""
-    return not (box1[2] <= box2[0] or box1[0] >= box2[2] or 
+    return not (box1[2] <= box2[0] or box1[0] >= box2[2] or
                 box1[3] <= box2[1] or box1[1] >= box2[3])
+
 
 # 辅助函数：计算重叠面积
 def calculate_overlap_area(box1, box2):
@@ -313,8 +322,8 @@ def calculate_overlap_area(box1, box2):
     y1_inter = max(box1[1], box2[1])
     x2_inter = min(box1[2], box2[2])
     y2_inter = min(box1[3], box2[3])
-    
+
     if x2_inter <= x1_inter or y2_inter <= y1_inter:
         return 0
-    
+
     return (x2_inter - x1_inter) * (y2_inter - y1_inter)

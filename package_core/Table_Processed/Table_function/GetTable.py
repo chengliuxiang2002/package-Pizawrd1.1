@@ -3,6 +3,7 @@ import fitz
 from package_core.Table_Processed.Table_function.dataProcess import (
     _find_vector_lines,
     _find_vector_lines2,
+    _find_vector_lines_universal,
     _build_grid_boundaries,
     _extract_text_from_grid,
     _clean_table_data
@@ -11,6 +12,40 @@ from package_core.Table_Processed.Table_function.getBoder import *
 from package_core.Table_Processed.Table_function.dataProcess import *
 from package_core.Table_Processed.Table_function.Tool import *
 from operator import itemgetter
+from functools import lru_cache
+
+
+# ==================== PDF 文档缓存管理 ====================
+class PDFDocumentCache:
+    """PDF 文档缓存，避免重复打开同一文件"""
+    _cache = {}
+
+    @classmethod
+    def get_doc(cls, pdf_path):
+        """获取缓存的 PDF 文档"""
+        if pdf_path not in cls._cache:
+            cls._cache[pdf_path] = fitz.open(pdf_path)
+        return cls._cache[pdf_path]
+
+    @classmethod
+    def close_all(cls):
+        """关闭所有缓存的文档"""
+        for doc in cls._cache.values():
+            try:
+                doc.close()
+            except:
+                pass
+        cls._cache.clear()
+
+    @classmethod
+    def close_doc(cls, pdf_path):
+        """关闭指定文档"""
+        if pdf_path in cls._cache:
+            try:
+                cls._cache[pdf_path].close()
+            except:
+                pass
+            del cls._cache[pdf_path]
 
 
 def check_image_overlap(page: fitz.Page, table_rect: fitz.Rect, threshold: float = 0.4) -> bool:
@@ -123,6 +158,9 @@ def get_texts_UsingVector(pdfPath, pageNumber, Coordinate):
     if len(h_lines) == 0 or len(v_lines) == 0:
         print("INFO: 方法一矢量线条未找到，将尝试方法二获取矢量线条。")
         h_lines, v_lines = _find_vector_lines2(page, table_rect)
+        if len(h_lines) == 0 or len(v_lines) == 0:
+            print("INFO: 方法二矢量线条未找到。")
+            h_lines, v_lines = _find_vector_lines_universal(page, table_rect)
     # 步骤 2: 根据线条完整性，构建网格边界
     row_boundaries, col_boundaries = _build_grid_boundaries(page, table_rect, h_lines, v_lines)
     # 步骤 3: 在构建的网格中提取文本
@@ -132,82 +170,175 @@ def get_texts_UsingVector(pdfPath, pageNumber, Coordinate):
     doc.close()
     return cleaned_table
 
+def is_text_valid(table):
+    """
+    检测表格文本是否有效（非乱码）。
+    如果文本主要由特殊符号组成，说明PDF字体编码有问题，需要使用OCR。
+
+    Args:
+        table: 二维表格列表
+
+    Returns:
+        bool: True表示文本有效，False表示可能是乱码
+    """
+    if not table or not table[0]:
+        print("INFO: 表格为空，文本无效")
+        return False
+
+    # 收集所有文本
+    all_text = ""
+    for row in table:
+        for cell in row:
+            if cell:
+                all_text += str(cell)
+
+    if len(all_text) == 0:
+        print("INFO: 表格文本为空")
+        return False
+
+    # 计算有效字符比例
+    # 有效字符：字母、数字、常用标点、中文
+    valid_chars = 0
+    letter_chars = 0  # 字母数量（更严格的检测）
+    for char in all_text:
+        if char.isalnum() or char in ' .,;:-_()[]/' or '\u4e00' <= char <= '\u9fff':
+            valid_chars += 1
+        if char.isalpha() or '\u4e00' <= char <= '\u9fff':
+            letter_chars += 1
+
+    # 计算包含关键词的比例
+    # 封装表格通常包含这些关键词
+    keywords = ['min', 'max', 'nom', 'typ', 'bsc', 'ref', 'note', 'symbol',
+                'dimension', 'mm', 'inch', 'mil', 'unit']
+    text_lower = all_text.lower()
+    keyword_found = any(kw in text_lower for kw in keywords)
+
+    # 有效字符比例
+    valid_ratio = valid_chars / len(all_text)
+    letter_ratio = letter_chars / len(all_text)
+    print(f"INFO: 文本有效性检测 - 总字符: {len(all_text)}, 有效字符: {valid_chars}({valid_ratio:.0%}), 字母: {letter_chars}({letter_ratio:.0%}), 关键词: {keyword_found}")
+
+    # 如果找到了关键词，认为是有效的
+    if keyword_found:
+        return True
+
+    # 如果字母比例太低（小于15%），说明可能是乱码
+    # 正常的封装表格应该有 Min/Max/Nom/Symbol 等字母
+    if letter_ratio < 0.15:
+        print(f"INFO: 文本有效性检测失败，字母比例过低，可能是字体编码问题")
+        return False
+
+    # 有效字符比例大于70%
+    if valid_ratio < 0.7:
+        print(f"INFO: 文本有效性检测失败，有效字符比例过低")
+        return False
+
+    return True
+
+def is_image_region_valid(image, tableCoordinate):
+    """
+    检查图片的表格区域是否有效（不是全白）
+    """
+    import numpy as np
+    crop = image[tableCoordinate[1]:tableCoordinate[3], tableCoordinate[0]:tableCoordinate[2]]
+    if crop.size == 0:
+        return False
+    if len(crop.shape) == 3:
+        # 检查白色像素比例
+        white_pixels = np.all(crop == [255, 255, 255], axis=2)
+        white_ratio = white_pixels.sum() / (crop.shape[0] * crop.shape[1])
+        # 如果白色比例超过 95%，认为图片区域无效
+        if white_ratio > 0.95:
+            print(f"INFO: 表格区域白色比例 {white_ratio:.1%}，可能是图片表格，切换到 WithText 模式")
+            return False
+    return True
+
+
+# ==================== OCR 处理公共逻辑 ====================
+def _process_table_with_ocr(pdfPath, pageNumber, Coordinate, TableImage=None):
+    """
+    使用 OCR 处理表格的公共逻辑（优化版：减少重复代码）
+
+    Args:
+        pdfPath: PDF 文件路径
+        pageNumber: 页码
+        Coordinate: 表格坐标
+        TableImage: 可选的预加载表格图片
+
+    Returns:
+        提取的表格数据
+    """
+    if TableImage is None:
+        TableImage = Get_Ocr_TableImage(pdfPath, pageNumber, Coordinate)
+
+    scale = 2
+    tableCoordinate = [round(x * scale) for x in Coordinate]
+
+    # 尝试获取边框信息
+    try:
+        image = pdf2img_WithoutText(pdfPath, pageNumber, scale)
+        if not is_image_region_valid(image, tableCoordinate):
+            image = pdf2img_WithText(pdfPath, pageNumber, scale)
+        xList, yList, HorizontalLine, VerticalLine = get_Border(image, tableCoordinate)
+    except:
+        image = pdf2img_WithText(pdfPath, pageNumber, scale)
+        xList, yList, HorizontalLine, VerticalLine = get_Border(image, tableCoordinate)
+
+    # 获取单元格坐标
+    cellsCoordinate = get_cells_coordinate(xList, yList, HorizontalLine, VerticalLine)
+
+    # OCR 识别
+    table = get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate)
+    # 检查是否需要旋转
+    rotate = Is_Common_package(table)
+    if rotate == -1:
+        # 转表不转图
+        table = rotate_table(table)
+    elif rotate == 90:
+        TableImage = cv2.rotate(TableImage, cv2.ROTATE_90_CLOCKWISE)
+        tableCoordinate, cellsCoordinate = Table_coordinate_transformation(
+            tableCoordinate, cellsCoordinate, image, direction=90
+        )
+        table = get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate)
+    elif rotate == 270:
+        TableImage = cv2.rotate(TableImage, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        tableCoordinate, cellsCoordinate = Table_coordinate_transformation(
+            tableCoordinate, cellsCoordinate, image, direction=270
+        )
+        table = get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate)
+        if Is_Common_package(table) == 270:
+            return []
+    # 单元格拆分（rotate == -1 时跳过）
+    if rotate != -1:
+        table = split_cell(table, cellsCoordinate)
+
+    return table
+
 #提取封装表格流程
 def get_table(pdfPath, pageNumber, Coordinate):
-
-    with fitz.open(pdfPath) as doc:
-        page = doc.load_page(pageNumber-1)
-        # 获取页面上的文本块
+    """
+    提取封装表格（优化版：减少 PDF 打开次数，合并重复逻辑）
+    """
+    # 使用缓存获取 PDF 文档
+    try:
+        doc = PDFDocumentCache.get_doc(pdfPath)
+        page = doc.load_page(pageNumber - 1)
         blocks = page.get_text("blocks", clip=Coordinate)
+    except Exception as e:
+        print(f"ERROR: 打开 PDF 失败: {e}")
+        return []
 
-    if blocks.__len__() < 5:
-        TableImage = Get_Ocr_TableImage(pdfPath, pageNumber, Coordinate)
-        # 获取图片表格的框线信息
-        scale = 2
-        try:
-            image = pdf2img_WithoutText(pdfPath, pageNumber, scale)
-            tableCoordinate = [round(x * scale) for x in Coordinate]
-            xList, yList, HorizontalLine, VerticalLine = get_Border(image, tableCoordinate)
-        except:
-            image = pdf2img_WithText(pdfPath, pageNumber, scale)
-            tableCoordinate = [round(x * scale) for x in Coordinate]
-            xList, yList, HorizontalLine, VerticalLine = get_Border(image, tableCoordinate)
-        # 得到所有单元格的坐标
-        cellsCoordinate = get_cells_coordinate(xList, yList, HorizontalLine, VerticalLine)
-        # 单元格可视化
-        # show_each_retangle(image, cellsCoordinate)
-        table = get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate)
-        rotate = Is_Common_package(table)
-        # 转表不转图
-        if rotate == -1:
-            table = rotate_table(table)
-        if rotate == 90:
-            TableImage = cv2.rotate(TableImage, cv2.ROTATE_90_CLOCKWISE)
-            tableCoordinate, cellsCoordinate = Table_coordinate_transformation(tableCoordinate, cellsCoordinate, image, direction=90)
-            table = get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate)
-        elif rotate == 270:
-            TableImage = cv2.rotate(TableImage, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            tableCoordinate, cellsCoordinate = Table_coordinate_transformation(tableCoordinate, cellsCoordinate, image, direction=270)
-            table = get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate)
-            if Is_Common_package(table) == 270:
-                return []
-        # 对没有框线分割但实际上需要进行单元格拆分的情况进行处理
-        table = split_cell(table, cellsCoordinate)
-    # elif judge_if_image_into(pdfPath, pageNumber, Coordinate):
-    #     TableImage = Get_Ocr_TableImage(pdfPath, pageNumber, Coordinate)
-    #     # 获取图片表格的框线信息
-    #     scale = 2
-    #     try:
-    #         image = pdf2img_WithoutText(pdfPath, pageNumber, scale)
-    #         tableCoordinate = [round(x * scale) for x in Coordinate]
-    #         xList, yList, HorizontalLine, VerticalLine = get_Border(image, tableCoordinate)
-    #     except:
-    #         image = pdf2img_WithText(pdfPath, pageNumber, scale)
-    #         tableCoordinate = [round(x * scale) for x in Coordinate]
-    #         xList, yList, HorizontalLine, VerticalLine = get_Border(image, tableCoordinate)
-    #     # 得到所有单元格的坐标
-    #     cellsCoordinate = get_cells_coordinate(xList, yList, HorizontalLine, VerticalLine)
-    #     # 单元格可视化
-    #     # show_each_retangle(image, cellsCoordinate)
-    #     table = get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate)
-    #     rotate = Is_Common_package(table)
-    #     # 转表不转图
-    #     if rotate == -1:
-    #         table = rotate_table(table)
-    #     if rotate == 90:
-    #         TableImage = cv2.rotate(TableImage, cv2.ROTATE_90_CLOCKWISE)
-    #         tableCoordinate, cellsCoordinate = Table_coordinate_transformation(tableCoordinate, cellsCoordinate, image, direction=90)
-    #         table = get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate)
-    #     elif rotate == 270:
-    #         TableImage = cv2.rotate(TableImage, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    #         tableCoordinate, cellsCoordinate = Table_coordinate_transformation(tableCoordinate, cellsCoordinate, image, direction=270)
-    #         table = get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate)
-    #         if Is_Common_package(table) == 270:
-    #             return []
-    #     # 对没有框线分割但实际上需要进行单元格拆分的情况进行处理
-    #     table = split_cell(table, cellsCoordinate)
+    if len(blocks) < 5:
+        # 文本块太少，直接使用 OCR
+        table = _process_table_with_ocr(pdfPath, pageNumber, Coordinate)
     else:
+        # 先尝试矢量方法
         table = get_texts_UsingVector(pdfPath, pageNumber, Coordinate)
+
+        # 检测文本是否有效（非乱码）
+        if not is_text_valid(table):
+            print("INFO: 矢量方法提取的文本无效（可能是字体编码问题），切换到OCR方法")
+            table = _process_table_with_ocr(pdfPath, pageNumber, Coordinate)
 
     return table
 
@@ -461,7 +592,7 @@ def get_nx_ny_from_title(page_num, nx, ny):
 
     return nx, ny,pin_nums
 def postProcess(table, packageType):
-    data = [['' for _ in  range(4)] for _ in range(13)]
+    data = [['' for _ in  range(4)] for _ in range(15)]
     KeyInfo = get_info_from_table(table)
     KeyInfo = keyInfo_checked(KeyInfo) #检查keyinfo的特殊情况
     data = add_info_from_KeyInfo(data,KeyInfo,packageType)

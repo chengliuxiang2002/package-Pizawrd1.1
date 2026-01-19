@@ -240,7 +240,7 @@ def linear(img):
     cv2.imwrite('temp.png', equa, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
     cv2.waitKey()
 
-def get_BGA_parameter_data(QFP_parameter_list, nx, ny):
+def get_BGA_parameter_data(BGA_parameter_list, nx, ny):
     """
 
         :param BGA_parameter_list:
@@ -249,17 +249,17 @@ def get_BGA_parameter_data(QFP_parameter_list, nx, ny):
         :return parameter_list:
         """
     parameter_list = []
-    for i in range(19):
+    for i in range(20):
         parameter_list.append(['', '', '', ''])
     # PIN行/列间距
-    if len(QFP_parameter_list[6]['maybe_data']) > 0:
-        parameter_list[0][1] = round(QFP_parameter_list[6]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[0][2] = round(QFP_parameter_list[6]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[0][3] = round(QFP_parameter_list[6]['maybe_data'][0]['max_medium_min'][0], 4)
-    if len(QFP_parameter_list[7]['maybe_data']) > 0:
-        parameter_list[1][1] = round(QFP_parameter_list[7]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[1][2] = round(QFP_parameter_list[7]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[1][3] = round(QFP_parameter_list[7]['maybe_data'][0]['max_medium_min'][0], 4)
+    if len(BGA_parameter_list[6]['maybe_data']) > 0:
+        parameter_list[0][1] = round(BGA_parameter_list[6]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[0][2] = round(BGA_parameter_list[6]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[0][3] = round(BGA_parameter_list[6]['maybe_data'][0]['max_medium_min'][0], 4)
+    if len(BGA_parameter_list[7]['maybe_data']) > 0:
+        parameter_list[1][1] = round(BGA_parameter_list[7]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[1][2] = round(BGA_parameter_list[7]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[1][3] = round(BGA_parameter_list[7]['maybe_data'][0]['max_medium_min'][0], 4)
     # PIN行数
     # if nx > 0:
     # parameter_list[9][1] = nx
@@ -271,33 +271,39 @@ def get_BGA_parameter_data(QFP_parameter_list, nx, ny):
     # parameter_list[10][2] = ny
     # parameter_list[10][3] = ny
     # 实体高
-    if len(QFP_parameter_list[4]['maybe_data']) > 0:
-        parameter_list[4][1] = round(QFP_parameter_list[4]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[4][2] = round(QFP_parameter_list[4]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[4][3] = round(QFP_parameter_list[4]['maybe_data'][0]['max_medium_min'][0], 4)
+    if len(BGA_parameter_list[4]['maybe_data']) > 0:
+        parameter_list[4][1] = round(BGA_parameter_list[4]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[4][2] = round(BGA_parameter_list[4]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[4][3] = round(BGA_parameter_list[4]['maybe_data'][0]['max_medium_min'][0], 4)
     # 支撑高
-    if len(QFP_parameter_list[5]['maybe_data']) > 0:
-        parameter_list[5][1] = round(QFP_parameter_list[5]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[5][2] = round(QFP_parameter_list[5]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[5][3] = round(QFP_parameter_list[5]['maybe_data'][0]['max_medium_min'][0], 4)
+    if len(BGA_parameter_list[5]['maybe_data']) > 0:
+        parameter_list[5][1] = round(BGA_parameter_list[5]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[5][2] = round(BGA_parameter_list[5]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[5][3] = round(BGA_parameter_list[5]['maybe_data'][0]['max_medium_min'][0], 4)
     # 实体长
-    if len(QFP_parameter_list[2]['maybe_data']) > 0:
-        parameter_list[6][1] = round(QFP_parameter_list[2]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[6][2] = round(QFP_parameter_list[2]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[6][3] = round(QFP_parameter_list[2]['maybe_data'][0]['max_medium_min'][0], 4)
-    elif len(QFP_parameter_list[3]['maybe_data']) > 0:
-        parameter_list[6][1] = round(QFP_parameter_list[3]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[6][2] = round(QFP_parameter_list[3]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[6][3] = round(QFP_parameter_list[3]['maybe_data'][0]['max_medium_min'][0], 4)
+    if len(BGA_parameter_list[2]['maybe_data']) > 0:
+        parameter_list[6][1] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[6][2] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[6][3] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][0], 4)
+    elif len(BGA_parameter_list[3]['maybe_data']) > 0:
+        parameter_list[6][1] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[6][2] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[6][3] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][0], 4)
     # 实体宽
-    if len(QFP_parameter_list[3]['maybe_data']) > 0:
-        parameter_list[7][1] = round(QFP_parameter_list[3]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[7][2] = round(QFP_parameter_list[3]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[7][3] = round(QFP_parameter_list[3]['maybe_data'][0]['max_medium_min'][0], 4)
-    elif len(QFP_parameter_list[2]['maybe_data']) > 0:
-        parameter_list[7][1] = round(QFP_parameter_list[2]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[7][2] = round(QFP_parameter_list[2]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[7][3] = round(QFP_parameter_list[2]['maybe_data'][0]['max_medium_min'][0], 4)
+    if len(BGA_parameter_list[3]['maybe_data']) > 0:
+        parameter_list[7][1] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[7][2] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[7][3] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][0], 4)
+    elif len(BGA_parameter_list[2]['maybe_data']) > 0:
+        parameter_list[7][1] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[7][2] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[7][3] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][0], 4)
+
+    #12.22新加Φ：
+    if len(BGA_parameter_list[17]['maybe_data']) > 0:
+        parameter_list[9][1] = round(BGA_parameter_list[17]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[9][2] = round(BGA_parameter_list[17]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[9][3] = round(BGA_parameter_list[17]['maybe_data'][0]['max_medium_min'][0], 4)
 
     return parameter_list
 

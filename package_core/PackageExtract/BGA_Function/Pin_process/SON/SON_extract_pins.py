@@ -160,8 +160,8 @@ def visualize_son_total_pins(image_path, border_coords, valid_pins, total_pins, 
 def get_SON_res(img_path):
     """加载SON模型并推理（逻辑不变）"""
     std_h, std_w = 640, 640
-    conf_thres = 0.2
-    iou_thres = 0.2
+    conf_thres = 0.3
+    iou_thres = 0.4
     class_config = ['Border', 'PIN', 'PIN_Number']
     ONNX_MODEL_PATH = model_path("yolo_model", "pin_detect", "QFN_pin_detect.onnx")  # 替换为你的SOP模型路径
 
@@ -182,7 +182,7 @@ def get_SON_res(img_path):
         class_config=class_config,
         conf_thres=conf_thres,
         iou_thres=iou_thres,
-        show_image=True
+        show_image=False
     )
     return res
 

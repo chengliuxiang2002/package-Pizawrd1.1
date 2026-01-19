@@ -10,10 +10,11 @@ import os
 import glob
 from ultralytics import YOLO
 from pathlib import Path
+from package_core.profiler import model_timer, step_timer
 
 # 导入统一路径管理
 try:
-    from package_core.PackageExtract.yolox_onnx_py.model_paths import result_path
+    from package_core.PackageExtract.yolox_onnx_py.model_paths import result_path, model_path
 except ModuleNotFoundError:
     from pathlib import Path
     def result_path(*parts):
@@ -24,8 +25,25 @@ SAVE_IMG_PATH = result_path('PDF_extract', 'detr_result')
 ZOOM = (3, 3)
 
 # YOLO模型配置
-MODEL_PATH = "model/yolo_model/PDF_processed/best.onnx"  # 修改为你的模型路径
+# MODEL_PATH = "model/yolo_model/PDF_processed/best.onnx"  # 修改为你的模型路径
+MODEL_PATH = model_path("yolo_model","PDF_processed","best.onnx")  # 修改为你的模型路径
 CONF_THRESHOLD = 0.6
+
+# ==================== 模型全局缓存 ====================
+_YOLO_MODEL_CACHE = {
+    'pdf_detection': None  # PDF页面检测模型
+}
+
+def get_cached_yolo_model(model_path, cache_key='pdf_detection'):
+    """获取缓存的YOLO模型，避免重复加载（节省1-2秒/次）"""
+    global _YOLO_MODEL_CACHE
+    if _YOLO_MODEL_CACHE.get(cache_key) is None:
+        print(f"🔄 首次加载YOLO模型: {model_path}")
+        _YOLO_MODEL_CACHE[cache_key] = YOLO(model_path)
+        print(f"✅ YOLO模型已缓存")
+    else:
+        print(f"✅ 使用缓存的YOLO模型")
+    return _YOLO_MODEL_CACHE[cache_key]
 
 # 类别配置（保持与DETR相同）
 VOC_CLASSES = ['BGA', 'BOTTOMVIEW', 'DETAIL', 'DFN_SON', 'Detail', 'Form', 'Note', 'Package_title', 'QFN', 'QFP',
@@ -117,9 +135,10 @@ def process_yolov13_detection():
         print(f"❌ 图片文件夹为空或不存在: {IMAGE_PATH}")
         return
 
-    # 加载YOLO模型
-    print("🔄 加载YOLOv13模型...")
-    model = YOLO(MODEL_PATH)
+    # 加载YOLO模型（使用缓存）
+    print("🔄 获取YOLO模型...")
+    with model_timer("YOLO-PDF模型加载"):
+        model = get_cached_yolo_model(MODEL_PATH)
 
     # 获取图片列表
     image_paths = glob.glob(os.path.join(IMAGE_PATH, "*.*"))
@@ -127,15 +146,16 @@ def process_yolov13_detection():
 
     # 进行推理
     print("🔄 开始推理...")
-    results = model.predict(
-        source=IMAGE_PATH,
-        conf=CONF_THRESHOLD,
-        save=True,
-        project=SAVE_IMG_PATH,
-        name="predictions",
-        exist_ok=True,
-        verbose=False
-    )
+    with model_timer("YOLO-PDF推理", {"image_count": len(image_paths)}):
+        results = model.predict(
+            source=IMAGE_PATH,
+            conf=CONF_THRESHOLD,
+            save=True,
+            project=SAVE_IMG_PATH,
+            name="predictions",
+            exist_ok=True,
+            verbose=False
+        )
 
     # 处理检测结果
     for i, result in enumerate(results):
@@ -441,6 +461,8 @@ def detect_components(pdf_path, pages):
 
     # 2. 转换PDF为图片
     pdf2img(pdf_path, pages)
+
+
 
     # 3. 调用DETR检测
     process_yolov13_detection()
