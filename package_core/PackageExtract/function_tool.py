@@ -659,7 +659,7 @@ def get_SON_parameter_data(SON_parameter_list, nx, ny):
     :return parameter_list:
     """
     parameter_list = []
-    for i in range(12):
+    for i in range(13):
         parameter_list.append(['', '', '', ''])
     # 实体长
     if len(SON_parameter_list[2]['maybe_data']) > 0:
@@ -690,10 +690,10 @@ def get_SON_parameter_data(SON_parameter_list, nx, ny):
         parameter_list[3][2] = round(SON_parameter_list[5]['maybe_data'][0]['max_medium_min'][1], 4)
         parameter_list[3][3] = round(SON_parameter_list[5]['maybe_data'][0]['max_medium_min'][0], 4)
     # PIN长
-    if len(SON_parameter_list[6]['maybe_data']) > 0:
-        parameter_list[4][1] = round(SON_parameter_list[6]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[4][2] = round(SON_parameter_list[6]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[4][3] = round(SON_parameter_list[6]['maybe_data'][0]['max_medium_min'][0], 4)
+    if len(SON_parameter_list[10]['maybe_data']) > 0:
+        parameter_list[4][1] = round(SON_parameter_list[10]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[4][2] = round(SON_parameter_list[10]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[4][3] = round(SON_parameter_list[10]['maybe_data'][0]['max_medium_min'][0], 4)
     # PIN宽
     if len(SON_parameter_list[7]['maybe_data']) > 0:
         parameter_list[5][1] = round(SON_parameter_list[7]['maybe_data'][0]['max_medium_min'][2], 4)
@@ -709,15 +709,12 @@ def get_SON_parameter_data(SON_parameter_list, nx, ny):
         parameter_list[7][1] = ny
         parameter_list[7][2] = ny
         parameter_list[7][3] = ny
+
     # 行/列PIN间距(pitch=e)
     if len(SON_parameter_list[6]['maybe_data']) > 0:
         parameter_list[8][1] = round(SON_parameter_list[6]['maybe_data'][0]['max_medium_min'][2], 4)
         parameter_list[8][2] = round(SON_parameter_list[6]['maybe_data'][0]['max_medium_min'][1], 4)
         parameter_list[8][3] = round(SON_parameter_list[6]['maybe_data'][0]['max_medium_min'][0], 4)
-    elif len(SON_parameter_list[7]['maybe_data']) > 0:
-        parameter_list[8][1] = round(SON_parameter_list[7]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[8][2] = round(SON_parameter_list[7]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[8][3] = round(SON_parameter_list[7]['maybe_data'][0]['max_medium_min'][0], 4)
     # PIN端距
     # 散热盘长(thermal_x=D2)
     if len(SON_parameter_list[8]['maybe_data']) > 0:
@@ -738,11 +735,11 @@ def get_SON_parameter_data(SON_parameter_list, nx, ny):
         parameter_list[11][2] = round(SON_parameter_list[8]['maybe_data'][0]['max_medium_min'][1], 4)
         parameter_list[11][3] = round(SON_parameter_list[8]['maybe_data'][0]['max_medium_min'][0], 4)
 
-    # # 端子厚度（terminal thickness=C）
-    # if len(SON_parameter_list[12]['maybe_data']) > 0:
-    #     parameter_list[12][1] = round(SON_parameter_list[12]['maybe_data'][0]['max_medium_min'][2], 4)
-    #     parameter_list[12][2] = round(SON_parameter_list[12]['maybe_data'][0]['max_medium_min'][1], 4)
-    #     parameter_list[12][3] = round(SON_parameter_list[12]['maybe_data'][0]['max_medium_min'][0], 4)
+    # 端子厚度（terminal thickness=C）
+    if len(SON_parameter_list[12]['maybe_data']) > 0:
+        parameter_list[12][1] = round(SON_parameter_list[12]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[12][2] = round(SON_parameter_list[12]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[12][3] = round(SON_parameter_list[12]['maybe_data'][0]['max_medium_min'][0], 4)
     # # 接触角度（contact angle=θ）
     # if len(SON_parameter_list[13]['maybe_data']) > 0:
     #     parameter_list[13][1] = round(SON_parameter_list[13]['maybe_data'][0]['max_medium_min'][2], 4)

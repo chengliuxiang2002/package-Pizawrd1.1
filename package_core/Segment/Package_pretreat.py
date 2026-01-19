@@ -1,8 +1,11 @@
 #F2.分装图预处理流程模块
-import copy
 import os.path
+from PIL import ImageEnhance
 import matplotlib
+import copy
+import matplotlib.pyplot as plt
 from package_core.PackageExtract.BGA_Function import BGA_extract
+# from package_core.PackageExtract.BGA_Function import QFN_extract
 from package_core.PackageExtract.BGA_Function.Pin_process.QFN.QFN_extract_pins import QFN_extract_pins
 from package_core.PackageExtract.BGA_Function.Pin_process.QFP.QFP_extract_pins import QFP_extract_pins
 from package_core.PackageExtract.BGA_Function.Pin_process.SON.SON_extract_pins import SON_extract_pins
@@ -14,7 +17,7 @@ from package_core.Segment.Segment_function import *
 from package_core.PackageExtract import QFP_extract
 from package_core.PackageExtract import SOP_extract
 from package_core.PackageExtract import QFN_extract
-from package_core.PackageExtract import SON_extract
+from package_core.PackageExtract.SON_Function import SON_extract
 from package_core.PackageExtract.BGA_Function.BGA_cal_pin import extract_BGA_PIN
 
 try:
@@ -311,7 +314,12 @@ def segment_package(package_img,class_dic, current_page):
         shutil.copy(TEMP_BOTTOM, SEGMENT_BOTTOM)
 
     # 处理多side情况
-    if 'side1.jpg' in os.listdir(SEGMENT_RESULT) and 'side.jpg' in os.listdir(SEGMENT_RESULT):
+    if os.path.exists(f'{DETR_RESULT}{current_page}/side.jpg') and os.path.exists(
+            f'{DETR_RESULT}{current_page}/side1.jpg'):
+        side = f'{DETR_RESULT}{current_page}/side.jpg'
+        side1 = f'{DETR_RESULT}{current_page}/side1.jpg'
+        side_combined(side, side1, save_path=SEGMENT_RESULT)
+    elif 'side1.jpg' in os.listdir(SEGMENT_RESULT) and 'side.jpg' in os.listdir(SEGMENT_RESULT):
         side = f'{SEGMENT_RESULT}/side.jpg'
         side1 = f'{SEGMENT_RESULT}/side1.jpg'
         side_combined(side, side1, save_path=SEGMENT_RESULT)
@@ -374,6 +382,7 @@ def package_indentify(package_type, current_page):
     if package_type == 'QFP':
         out_put = QFP_extract.extract_package(package_type, current_page)
     elif package_type == 'QFN':
+        print('QFN')
         out_put = QFN_extract.run_f4_pipeline(destination_folder_path, package_type)
     elif package_type == 'SOP':
         # out_put = SOP_extract.extract_SOP(package_type, current_page)
@@ -419,10 +428,10 @@ def write_xy_to_txt(x, file_path, y=None, encoding="utf-8"):
 
 def extract_BGA_pins():
     # 提取BGA引脚数量
-    pin_num_x_serial, pin_num_y_serial, loss_pin,loss_color = extract_BGA_PIN()
+    pin_num_x_serial, pin_num_y_serial, loss_pin,loss_color, rot = extract_BGA_PIN()
     write_xy_to_txt(pin_num_x_serial,PIN_NUM_PATH, pin_num_y_serial)
 
-    return pin_num_x_serial, pin_num_y_serial, loss_pin,loss_color
+    return pin_num_x_serial, pin_num_y_serial, loss_pin,loss_color, rot
 
 def extract_QFP_pins():
     # 提取QFP行列引脚数量

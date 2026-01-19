@@ -452,17 +452,23 @@ def add_minimum_bounding_boxes_for_target_pages():
     return added_count
 
 
-def detect_components(pdf_path, pages):
+def detect_components(pdf_path, pages, skip_conversion=False):
     """
     完整的组件检测流程（使用DETR模型）
+    :param pdf_path: PDF路径
+    :param pages: 需要处理的页码列表
+    :param skip_conversion: 是否跳过PDF转图片步骤 (用于旋转修正时，防止覆盖已旋转的图片)
     """
     # 1. 初始化数据存储
     init_data_storage()
 
-    # 2. 转换PDF为图片
-    pdf2img(pdf_path, pages)
-
-
+    # 2. 转换PDF为图片 (根据标志位决定是否执行)
+    if not skip_conversion:
+        # 只有在正常流程下才从 PDF 重新提取图片
+        # 旋转修正流程中，图片已经被 rotate_current_page_image 修改好了，不能覆盖
+        pdf2img(pdf_path, pages)
+    else:
+        print("INFO: 跳过 PDF 转图片步骤，直接使用现有图片进行检测。")
 
     # 3. 调用DETR检测
     process_yolov13_detection()
@@ -470,7 +476,7 @@ def detect_components(pdf_path, pages):
     # 4. 为需要的页面添加最小外接矩形框
     add_minimum_bounding_boxes_for_target_pages()
 
-    # 5. 保存检测结果到JSON文件
+    # 5. 组装结果
     results = {
         'source_data': source_data,
         'source_package_data': source_package_data,
@@ -487,10 +493,4 @@ def detect_components(pdf_path, pages):
         'source_DETAIL_data': source_DETAIL_data
     }
 
-    # 5. 保存到JSON文件
-    # with open('Result/PDF_extract/detr_detection_results0.json', 'w', encoding='utf-8') as f:
-    #     json.dump(results, f, ensure_ascii=False, indent=2,
-    #               default=lambda x: float(x) if isinstance(x, (np.float32, np.float64)) else x)
-
-    # print("检测结果已保存到 detr_detection_results.json")
     return results

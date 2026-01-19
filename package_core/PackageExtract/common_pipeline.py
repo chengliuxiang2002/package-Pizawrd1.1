@@ -705,19 +705,24 @@ def extract_sorted_dimensions(side_ocr_data_list, side_yolox_num):
         top_dims = [dim_array for dim_array, _ in sorted_dims[:3]]
         
         # 如果不足3个，补充[0,0,0]
-        while len(top_dims) < 3:
-            top_dims.append([0, 0, 0])
+        # while len(top_dims) < 3:
+        #     top_dims.append([0, 0, 0])
         
-        # 分配给输出变量
-        if len(top_dims) > 2:
-            # 长度大于2时，保持原逻辑
+        # 根据不同的数量分配
+        if len(top_dims) >= 3:
+            # 有3个或以上值
             side_A = list(top_dims[0])
-            side_A1 = list(top_dims[2])
             side_A3 = list(top_dims[1])
-        else:
-            # 长度小于等于2时，按顺序填充
-            side_A = list(top_dims[0]) if len(top_dims) > 0 else [0, 0, 0]
-            side_A1 = list(top_dims[1]) if len(top_dims) > 1 else [0, 0, 0]
+            side_A1 = list(top_dims[2])
+        elif len(top_dims) == 2:
+            # 只有2个值
+            side_A = list(top_dims[0])
+            side_A1 = list(top_dims[1])
+            side_A3 = [0, 0, 0]  # 没有第3个值
+        elif len(top_dims) == 1:
+            # 只有1个值
+            side_A = list(top_dims[0])
+            side_A1 = [0, 0, 0]
             side_A3 = [0, 0, 0]
     
     return side_A, side_A3, side_A1
@@ -1769,6 +1774,15 @@ def extract_pin_dimensions(pin_boxs, bottom_ocr_data_list, triple_factor):
         
         return bottom_elements
     
+    def get_direction_type(direction):
+        """判断方向类型：水平或竖直"""
+        if direction in ['up', 'down']:
+            return 'horizontal'  # 上下是水平方向
+        elif direction in ['left', 'right']:
+            return 'vertical'    # 左右是竖直方向
+        else:
+            return 'unknown'
+    
     print("=== extract_pin_dimensions 开始执行 ===")
     
     # 初始化输出值
@@ -1864,6 +1878,7 @@ def extract_pin_dimensions(pin_boxs, bottom_ocr_data_list, triple_factor):
             b_element = {
                 'location': matched_element['location'],
                 'direction': matched_element.get('direction', ''),
+                'direction_type': get_direction_type(matched_element.get('direction', '')),
                 'arrow_pairs': matched_element.get('arrow_pairs', None),
                 'max_medium_min': max_medium_min  # 使用OCR的max_medium_min
             }
@@ -1881,6 +1896,11 @@ def extract_pin_dimensions(pin_boxs, bottom_ocr_data_list, triple_factor):
     if not all_b_elements:
         print("警告: 没有找到匹配的B元素，返回默认值")
         return bottom_b, bottom_L
+    
+    # 打印所有元素的方向信息
+    for idx, element in enumerate(all_b_elements):
+        print(f"元素{idx}: direction={element['direction']}, direction_type={element['direction_type']}, "
+              f"max_medium_min={element['max_medium_min']}")
     
     # 按照标准值(中间值)对all_b_elements排序（升序）
     all_b_elements.sort(key=lambda x: x['max_medium_min'][1] if len(x['max_medium_min']) > 1 else 0)
@@ -1946,165 +1966,157 @@ def extract_pin_dimensions(pin_boxs, bottom_ocr_data_list, triple_factor):
     
     # 开始与pin_boxs尺寸进行比对
     print("开始与pin_boxs尺寸进行比对...")
-    best_short_match = None
-    best_long_match = None
-    min_short_diff = float('inf')
-    min_long_diff = float('inf')
-    
-    # 优先选择有arrow_pairs的元素
-    for idx, element in enumerate(all_b_elements):
-        arrow_pairs = element.get('arrow_pairs', None)
-        
-        if arrow_pairs is None or len(arrow_pairs) == 0:
-            continue  # 跳过没有arrow_pairs的元素
-        
-        # 获取最后一位（引线之间距离）
-        try:
-            arrow_distance = float(arrow_pairs[-1])
-        except Exception as e:
-            continue
-        
-        # 计算与短边和长边的差异
-        short_diff = abs(arrow_distance - pin_short)
-        long_diff = abs(arrow_distance - pin_long)
-        
-        print(f"元素{idx}(有箭头): 箭头距离={arrow_distance:.2f}, "
-              f"与短边差异={short_diff:.2f}, 与长边差异={long_diff:.2f}")
-        
-        # 寻找与短边最相似的元素
-        if short_diff < min_short_diff:
-            min_short_diff = short_diff
-            best_short_match = element
-            print(f"  更新短边最佳匹配: 差异={short_diff:.2f}")
-        
-        # 寻找与长边最相似的元素
-        if long_diff < min_long_diff:
-            min_long_diff = long_diff
-            best_long_match = element
-            print(f"  更新长边最佳匹配: 差异={long_diff:.2f}")
-    
-    # 如果通过有arrow_pairs的元素没有找到匹配，再考虑没有arrow_pairs的元素
-    if best_short_match is None or best_long_match is None:
-        print("通过有arrow_pairs的元素未找到足够匹配，考虑无arrow_pairs的元素...")
-        for idx, element in enumerate(all_b_elements):
-            if element.get('arrow_pairs') is not None:
-                continue  # 跳过已经有arrow_pairs的元素
-            
-            # 对于没有arrow_pairs的元素，使用max_medium_min的标准值进行匹配
-            max_medium_min = element.get('max_medium_min', [])
-            if len(max_medium_min) < 2:
-                continue
-            
-            std_value = max_medium_min[1]  # 标准值
-            
-            # 计算与短边和长边的差异
-            short_diff = abs(std_value - pin_short)
-            long_diff = abs(std_value - pin_long)
-            
-            print(f"元素{idx}(无箭头): 标准值={std_value:.2f}, "
-                  f"与短边差异={short_diff:.2f}, 与长边差异={long_diff:.2f}")
-            
-            # 寻找与短边最相似的元素
-            if short_diff < min_short_diff:
-                min_short_diff = short_diff
-                best_short_match = element
-                print(f"  更新短边最佳匹配: 差异={short_diff:.2f}")
-            
-            # 寻找与长边最相似的元素
-            if long_diff < min_long_diff:
-                min_long_diff = long_diff
-                best_long_match = element
-                print(f"  更新长边最佳匹配: 差异={long_diff:.2f}")
     
     # 使用阈值判断是否"很相似"
-    similarity_threshold = 0.2  # 从10%放宽到20%的误差
+    similarity_threshold = 0.25  # 从10%放宽到20%的误差
     pin_short_threshold = pin_short * similarity_threshold
     pin_long_threshold = pin_long * similarity_threshold
     
-    print(f"\n相似性阈值: 短边={pin_short_threshold:.2f}, 长边={pin_long_threshold:.2f}")
+    print(f"相似性阈值: 短边={pin_short_threshold:.2f}, 长边={pin_long_threshold:.2f}")
     
-    # 记录是否通过引线找到匹配
-    short_matched = False
-    long_matched = False
+    # 第一步：先确定bottom_b（短边方向）
+    print("\n=== 第一步: 确定bottom_b（短边） ===")
     
-    # 判断短边是否有匹配
-    if best_short_match is not None and min_short_diff <= pin_short_threshold:
-        bottom_b = best_short_match['max_medium_min'].copy()
-        short_matched = True
-        has_arrow = best_short_match.get('arrow_pairs') is not None
-        print(f"短边找到{'有箭头' if has_arrow else '无箭头'}匹配: max_medium_min={bottom_b}, 差异={min_short_diff:.2f}")
-    else:
-        # 没有匹配，使用标准值排序取最小
-        print(f'短边无相似匹配, 最小差异={min_short_diff:.2f}, 阈值={pin_short_threshold:.2f}')
-        if all_b_elements:
-            bottom_b = all_b_elements[0]['max_medium_min'].copy()
-            print(f"短边使用标准值排序最小: max_medium_min={bottom_b}")
+    # 优先选择有arrow_pairs的元素
+    best_b_element = None
+    min_b_diff = float('inf')
     
-    # 判断长边是否有匹配
-    if best_long_match is not None and min_long_diff <= pin_long_threshold:
-        # 如果长边匹配的元素与短边匹配的元素相同，且短边已经匹配，则我们需要找另一个元素
-        if best_long_match == best_short_match and short_matched:
-            print("长边匹配的元素与短边相同，且短边已匹配，为长边寻找次佳匹配")
-            # 在剩余元素中寻找与长边最相似的元素
-            second_best_long_match = None
-            second_min_long_diff = float('inf')
-            
-            for idx, element in enumerate(all_b_elements):
-                if element == best_short_match:
-                    continue  # 跳过已经被短边使用的元素
-                    
-                # 根据是否有arrow_pairs选择比较方式
-                if element.get('arrow_pairs') is not None:
-                    try:
-                        arrow_distance = float(element['arrow_pairs'][-1])
-                        long_diff = abs(arrow_distance - pin_long)
-                    except:
-                        continue
-                else:
-                    max_medium_min = element.get('max_medium_min', [])
-                    if len(max_medium_min) < 2:
-                        continue
-                    long_diff = abs(max_medium_min[1] - pin_long)
-                
-                if long_diff < second_min_long_diff:
-                    second_min_long_diff = long_diff
-                    second_best_long_match = element
-            
-            # 检查次佳匹配是否满足阈值
-            if second_best_long_match is not None and second_min_long_diff <= pin_long_threshold:
-                bottom_L = second_best_long_match['max_medium_min'].copy()
-                long_matched = True
-                has_arrow = second_best_long_match.get('arrow_pairs') is not None
-                print(f"长边找到{'有箭头' if has_arrow else '无箭头'}次佳匹配: max_medium_min={bottom_L}, 差异={second_min_long_diff:.2f}")
-            else:
-                # 没有次佳匹配，使用标准值排序
-                print(f'长边无次佳相似匹配')
-                if len(all_b_elements) >= 2:
-                    # 使用排序后的最后一个元素（最大值）
-                    bottom_L = all_b_elements[-1]['max_medium_min'].copy()
-                    long_matched = False
-                    print(f"长边使用标准值排序最大: max_medium_min={bottom_L}")
-                elif all_b_elements:
-                    bottom_L = all_b_elements[0]['max_medium_min'].copy()
-                    long_matched = False
-                    print(f"长边只有一个元素可用，使用第一个: max_medium_min={bottom_L}")
+    for idx, element in enumerate(all_b_elements):
+        # 获取箭头距离（优先使用arrow_pairs，没有则使用标准值）
+        if element.get('arrow_pairs') is not None and len(element['arrow_pairs']) > 0:
+            try:
+                arrow_distance = float(element['arrow_pairs'][-1])
+                diff = abs(arrow_distance - pin_short)
+                print(f"元素{idx}(有箭头): direction={element['direction']}, direction_type={element['direction_type']}, "
+                      f"箭头距离={arrow_distance:.2f}, 与短边差异={diff:.2f}")
+            except:
+                continue
         else:
-            bottom_L = best_long_match['max_medium_min'].copy()
-            long_matched = True
-            has_arrow = best_long_match.get('arrow_pairs') is not None
-            print(f"长边找到{'有箭头' if has_arrow else '无箭头'}匹配: max_medium_min={bottom_L}, 差异={min_long_diff:.2f}")
+            max_medium_min = element.get('max_medium_min', [])
+            if len(max_medium_min) < 2:
+                continue
+            std_value = max_medium_min[1]
+            diff = abs(std_value - pin_short)
+            print(f"元素{idx}(无箭头): direction={element['direction']}, direction_type={element['direction_type']}, "
+                  f"标准值={std_value:.2f}, 与短边差异={diff:.2f}")
+        
+        # 检查是否是最佳匹配
+        if diff < min_b_diff and diff <= pin_short_threshold:
+            min_b_diff = diff
+            best_b_element = element
+            print(f"  更新为最佳bottom_b候选")
+    
+    if best_b_element is not None:
+        bottom_b = best_b_element['max_medium_min'].copy()
+        b_direction_type = best_b_element['direction_type']
+        print(f"确定bottom_b: direction_type={b_direction_type}, max_medium_min={bottom_b}, 差异={min_b_diff:.2f}")
+        
+        # 从列表中移除已选中的元素，避免重复使用
+        if best_b_element in all_b_elements:
+            all_b_elements.remove(best_b_element)
+            print(f"已从候选列表中移除bottom_b元素")
     else:
-        # 没有匹配，使用标准值排序
-        print(f'长边无相似匹配, 最小差异={min_long_diff:.2f}, 阈值={pin_long_threshold:.2f}')
-        if len(all_b_elements) >= 2:
-            # 使用排序后的最后一个元素（最大值）
-            bottom_L = all_b_elements[-1]['max_medium_min'].copy()
-            long_matched = False
-            print(f"长边使用标准值排序最大: max_medium_min={bottom_L}")
-        elif all_b_elements:
-            bottom_L = all_b_elements[0]['max_medium_min'].copy()
-            long_matched = False
-            print(f"长边只有一个元素可用，使用第一个: max_medium_min={bottom_L}")
+        # 没有找到合适的匹配，使用排序最小且方向明确的元素
+        print("没有找到与短边相似的匹配，使用标准值排序方法")
+        for element in all_b_elements:
+            if element['direction_type'] != 'unknown':
+                bottom_b = element['max_medium_min'].copy()
+                b_direction_type = element['direction_type']
+                print(f"使用第一个方向明确的元素作为bottom_b: direction_type={b_direction_type}")
+                all_b_elements.remove(element)
+                break
+        
+        if bottom_b[0] == 0:  # 如果没有找到方向明确的元素
+            if all_b_elements:
+                bottom_b = all_b_elements[0]['max_medium_min'].copy()
+                b_direction_type = all_b_elements[0]['direction_type']
+                print(f"使用第一个元素作为bottom_b: direction_type={b_direction_type}")
+                all_b_elements.pop(0)
+            else:
+                b_direction_type = 'unknown'
+                print("警告: 没有可用的元素，bottom_b保持默认值")
+    
+    # 第二步：确定bottom_L（长边方向），需要与bottom_b方向不同
+    print(f"\n=== 第二步: 确定bottom_L（长边），需要与bottom_b方向({b_direction_type})不同 ===")
+    
+    # 优先寻找与bottom_b方向不同的元素
+    best_l_element_different_dir = None
+    min_l_diff_different = float('inf')
+    
+    # 再寻找所有元素中的最佳匹配（不考虑方向）
+    best_l_element_any = None
+    min_l_diff_any = float('inf')
+    
+    for idx, element in enumerate(all_b_elements):
+        # 获取箭头距离或标准值
+        if element.get('arrow_pairs') is not None and len(element['arrow_pairs']) > 0:
+            try:
+                arrow_distance = float(element['arrow_pairs'][-1])
+                diff = abs(arrow_distance - pin_long)
+            except:
+                continue
+        else:
+            max_medium_min = element.get('max_medium_min', [])
+            if len(max_medium_min) < 2:
+                continue
+            std_value = max_medium_min[1]
+            diff = abs(std_value - pin_long)
+        
+        # 判断方向是否不同
+        is_different_direction = (element['direction_type'] != b_direction_type)
+        
+        print(f"元素{idx}: direction={element['direction']}, direction_type={element['direction_type']}, "
+              f"与长边差异={diff:.2f}, 与bottom_b方向{'不同' if is_different_direction else '相同'}")
+        
+        # 检查是否是与bottom_b方向不同的最佳匹配
+        if is_different_direction and diff < min_l_diff_different and diff <= pin_long_threshold:
+            min_l_diff_different = diff
+            best_l_element_different_dir = element
+            print(f"  更新为方向不同的最佳bottom_L候选")
+        
+        # 检查是否是最佳匹配（不考虑方向）
+        if diff < min_l_diff_any and diff <= pin_long_threshold:
+            min_l_diff_any = diff
+            best_l_element_any = element
+    
+    # 确定使用哪个元素作为bottom_L
+    if best_l_element_different_dir is not None:
+        # 优先使用方向不同的元素
+        bottom_L = best_l_element_different_dir['max_medium_min'].copy()
+        l_direction_type = best_l_element_different_dir['direction_type']
+        print(f"使用方向不同的元素作为bottom_L: direction_type={l_direction_type}, max_medium_min={bottom_L}")
+    elif best_l_element_any is not None:
+        # 如果没有方向不同的元素，使用最佳匹配的元素
+        bottom_L = best_l_element_any['max_medium_min'].copy()
+        l_direction_type = best_l_element_any['direction_type']
+        print(f"使用最佳匹配的元素作为bottom_L: direction_type={l_direction_type}, max_medium_min={bottom_L}")
+    else:
+        # 没有找到合适的匹配，从剩余元素中选择
+        if all_b_elements:
+            # 优先选择与bottom_b方向不同的元素
+            different_dir_elements = [e for e in all_b_elements if e['direction_type'] != b_direction_type]
+            if different_dir_elements:
+                # 选择标准值最大的不同方向元素
+                different_dir_elements.sort(key=lambda x: x['max_medium_min'][1] if len(x['max_medium_min']) > 1 else 0, reverse=True)
+                bottom_L = different_dir_elements[0]['max_medium_min'].copy()
+                l_direction_type = different_dir_elements[0]['direction_type']
+                print(f"使用不同方向元素中标准值最大的作为bottom_L: direction_type={l_direction_type}")
+            else:
+                # 没有不同方向的元素，选择标准值最大的元素
+                all_b_elements.sort(key=lambda x: x['max_medium_min'][1] if len(x['max_medium_min']) > 1 else 0, reverse=True)
+                bottom_L = all_b_elements[0]['max_medium_min'].copy()
+                l_direction_type = all_b_elements[0]['direction_type']
+                print(f"使用剩余元素中标准值最大的作为bottom_L: direction_type={l_direction_type}")
+        else:
+            print("警告: 没有可用的元素用于bottom_L，保持默认值")
+    
+    # 检查最终方向是否正确
+    if 'b_direction_type' in locals() and 'l_direction_type' in locals():
+        if b_direction_type != 'unknown' and l_direction_type != 'unknown':
+            if b_direction_type == l_direction_type:
+                print(f"警告: bottom_b和bottom_L方向相同({b_direction_type})，不符合一个水平一个竖直的要求")
+            else:
+                print(f"方向检查: bottom_b={b_direction_type}, bottom_L={l_direction_type}，符合要求")
     
     print(f"\n最终结果: bottom_b={bottom_b}, bottom_L={bottom_L}")
     print("=== extract_pin_dimensions 执行结束 ===\n")
@@ -2675,6 +2687,10 @@ def extract_pitch_dimensions(pin_boxh, pin_boxv, bottom_ocr_data_list, triple_fa
         pitch_x = pitch_y.copy()
         print(f"竖直方向通过引线找到匹配，水平方向没有，设置pitch_x=pitch_y: {pitch_x}")
     elif not horizontal_matched_by_arrow and not vertical_matched_by_arrow:
+        if pitch_x[1] < pitch_y[1]:
+            pitch_x, pitch_y = pitch_x,pitch_x
+        else:
+            pitch_x, pitch_y = pitch_y,pitch_y
         print("水平和竖直方向都没有通过引线找到匹配，保持各自的排序结果")
     
     print(f"\n最终结果: pitch_x={pitch_x}, pitch_y={pitch_y}")

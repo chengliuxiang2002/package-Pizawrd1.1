@@ -320,6 +320,7 @@ def get_table(pdfPath, pageNumber, Coordinate):
     提取封装表格（优化版：减少 PDF 打开次数，合并重复逻辑）
     """
     # 使用缓存获取 PDF 文档
+    print("INFO: 传统方法识别表格")
     try:
         doc = PDFDocumentCache.get_doc(pdfPath)
         page = doc.load_page(pageNumber - 1)
@@ -382,7 +383,7 @@ def judge_if_complete_table(table, packageType):
                 table[i][j] = re.sub(r'\(\d+\)', '', str(table[i][j]))
             if table[i][j] == 'A_A': count += 1
             if table[i][j] == 'eD' or table[i][j] == 'eE': count += 1
-            if table[i][j] == 'Φb' or table[i][j] == 'G': count += 1
+            if table[i][j] == 'Φb' or table[i][j] == 'G' or table[i][j] == 'b/B': count += 1
             if table[i][j] == 'DE': count += 4
             if table[i][j] == 'D/E': count += 2
             if table[i][j] == '':

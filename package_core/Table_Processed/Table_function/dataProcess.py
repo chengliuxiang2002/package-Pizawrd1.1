@@ -1171,11 +1171,11 @@ def get_data_from_common_table(table):
     # 检测并处理 mm/inch 混合表格，只保留毫米数据
     table = split_mm_inch_table(table)
 
-    print(f"DEBUG get_data: split后前4行={table[:4]}")
+    # print(f"DEBUG get_data: split后前4行={table[:4]}")
 
     # 找到目标值所在行列，一般会有MIN NOM MAX等标识
     title, Paircols, table = find_MIN_NOM_MAX(table)
-    print(f"DEBUG get_data: title={title}, Paircols={Paircols}")
+    # print(f"DEBUG get_data: title={title}, Paircols={Paircols}")
     if Paircols == []:
         title, Paircols = find_number_col(table)
     tableRows = len(table)

@@ -538,6 +538,43 @@ class RecoThread(QThread):
         self.package = package # 此为所有的封装信息
         self.result = None
 
+    def rotate_current_page_image(self, rot):
+        """
+        【新增】旋转当前页面的检测用图并覆盖保存
+        """
+        try:
+            # 路径策略 1: 用户指定的 Result 路径 (优先级最高)
+            # 假设文件名是纯数字页码: 24.png
+            img_path_result = os.path.join("Result", "PDF_extract", "detr_img", f"{self.current_page+1}.png")
+
+            # 路径策略 2: 默认路径 (作为备份)
+            img_path_default = os.path.join("package_core", "PDF_Processed", "det_sign",
+                                            f"merged_package_titles_page_{self.current_page+1}_det.png")
+
+            target_path = ""
+            if os.path.exists(img_path_result):
+                target_path = img_path_result
+            elif os.path.exists(img_path_default):
+                target_path = img_path_default
+            else:
+                print(f"Error: 未找到需要旋转的图片。已尝试路径:\n1. {img_path_result}\n2. {img_path_default}")
+                return False
+
+            print(f"INFO: 正在旋转图片 {rot}°: {target_path}")
+
+            with Image.open(target_path) as img:
+                # PIL rotate 是逆时针旋转
+                # expand=True 确保旋转后画布尺寸自适应，防止裁剪
+                img_rotated = img.rotate(rot, expand=True)
+                img_rotated.save(target_path)
+
+            print("INFO: 图片旋转并覆盖保存成功。")
+            return True
+
+        except Exception as e:
+            print(f"Error: 图片旋转失败: {e}")
+            return False
+
     def run(self):
         """识别函数接口"""
         try:
@@ -545,18 +582,50 @@ class RecoThread(QThread):
             print(f"开始识别")
             Table_Coordinate_List = []
             page_Number_List = []
+
             pin_num_x_serial = None
             pin_num_y_serial = None
             pin_sum = None
-            manage_data, package_type = manage_json(self.current_package)
             # 封装类型
-            # package_type = self.type_dict[self.current_page]
-            if package_type == 'DFN_SON' or package_type == 'DFN':
+            manage_data, package_type = manage_json(self.current_package)
+            if package_type == 'DFN_SON'or package_type == 'DFN':
                 package_type = 'SON'
             package_process(self.current_page, manage_data[0])  # 分割流程
             if package_type == 'BGA':
                 # 如果表格类型是BGA,运行数字提取BGA引脚数量
-                pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color = extract_BGA_pins()
+                pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color, rot = extract_BGA_pins()
+                if rot!= 0:
+                    print(f"WARN: 页面方向不正，开始执行自动旋转修正流程 (顺旋转 {rot}°)...")
+
+                    # A. 旋转图片
+                    self.rotate_current_page_image(-rot)
+
+                    # B. 重新运行 DETR 检测 (仅针对当前页)
+                    print("INFO: 重新运行 DETR 检测以获取修正后的坐标...")
+                    pipeline = PackageDetectionPipeline(self.pdf_path)
+                    target_page_list = [self.current_page]
+
+                    try:
+                        # 重新执行 Step 2, 3, 4
+                        raw_detr = pipeline.step2_run_detr_detection(target_page_list, skip_conversion=True)
+                        mod_detr = pipeline.step3_match_keywords(raw_detr, target_page_list)
+                        _, final_data, _, _ = pipeline.step4_group_package_components(mod_detr)
+
+                        if final_data and len(final_data) > 0:
+                            print("INFO: 坐标修正成功，更新封装数据。")
+                            # 更新 self.current_package 为修正后的数据 (假设取第一个检测到的封装)
+                            self.current_package = final_data[0]
+
+                            # C. 使用新坐标重新执行分割
+                            manage_data, _ = manage_json(self.current_package)  # 刷新 manage_data
+                            package_process(self.current_page, manage_data[0])  # 重新切图
+                            print("INFO: 旋转修正完成，BGA 提取完毕。")
+                        else:
+                            print("ERROR: 旋转后 DETR 未检测到有效封装，将使用原始数据继续。")
+                    except Exception as e:
+                        print(f"ERROR: 修正流程出错: {e}，将使用原始数据继续。")
+                else:
+                    print("ERROR: 图片旋转失败，跳过修正。")
             if package_type == 'QFP':
                 pin_num_x_serial, pin_num_y_serial = extract_QFP_pins()
             if package_type == 'QFN':
@@ -580,11 +649,6 @@ class RecoThread(QThread):
                         self.result[3] = ['', '', pin_num_y_serial, ''] if pin_num_y_serial is not None else self.result[3]
                         self.result[10][2] = str(loss_color)
                         self.result[10][1] = str(loss_pin)
-                    if package_type == 'SON':
-                        self.result[1] = ['', '', pin_sum, ''] if pin_sum is not None else self.result[1]
-                    if package_type == 'SOP':
-                        self.result[1] = ['', '', pin_sum, ''] if pin_sum is not None else self.result[1]
-
             elif self.current_package['part_content'] is None and self.current_package['type'] == 'list':  # 说明是自动框表
                 #目前只考虑识别当前框选的表，暂不考虑识别多个框选的表
                 Table_Coordinate_List = [[],self.current_package['rect'],[]]

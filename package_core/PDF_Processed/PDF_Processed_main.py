@@ -49,16 +49,22 @@ class PackageDetectionPipeline:
         print(f"最终处理页面列表: {valid_page_list} (共 {len(valid_page_list)} 页)")
         return valid_page_list
 
-    def step2_run_detr_detection(self, page_list):
-        """步骤2: 对指定的页面列表运行DETR模型检测。"""
-        print("\n步骤2: 开始DETR组件检测...")
+    def step2_run_detr_detection(self, page_list, skip_conversion=False):
+        """
+        步骤2: 对指定的页面列表运行DETR模型检测。
+        :param page_list: 页码列表
+        :param skip_conversion: 是否跳过图片生成 (True=使用磁盘现有图片, False=从PDF重新提取)
+        """
+        # print("\n步骤2: 开始DETR组件检测...")
         if not page_list:
             print("警告: 没有需要处理的页面。")
             return None
 
         # detect_components 返回原始的检测结果
+        # 注意：这里需要传入 skip_conversion
         with step_timer("Step2-DETR检测", {"page_count": len(page_list)}):
-            detection_results = detect_components(self.pdf_path, page_list)
+            detection_results = detect_components(self.pdf_path, page_list, skip_conversion=skip_conversion)
+
         return detection_results
 
     def step3_match_keywords(self, detection_results, page_list):

@@ -2674,10 +2674,11 @@ def extract_BGA_PIN():
 
     # 解析 BGA_get_PIN 结果
     if pin_result is not None:
-        _, _, pin_num_x_serial, pin_num_y_serial,_,_,_,_ = pin_result
+        _, _, pin_num_x_serial, pin_num_y_serial,_,_,_,rot = pin_result
     else:
         print("BGA_get_PIN 结果为空，重新调用")
-        _, _, pin_num_x_serial, pin_num_y_serial,_,_,_,_ = BGA_get_PIN(path)
+        _, _, pin_num_x_serial, pin_num_y_serial,_,_,_,rot = BGA_get_PIN(path)
+
 
     # ============ 计算 loss_pin（使用 pinmap）============
     pin_map, color = time_save_find_pinmap(bottom_border)
@@ -2711,7 +2712,7 @@ def extract_BGA_PIN():
 
     loss_pin1 = 'None' if len(loss_pin) == 0 else loss_pin
 
-    return pin_num_x_serial, pin_num_y_serial, loss_pin1, loss_color
+    return pin_num_x_serial, pin_num_y_serial, loss_pin1, loss_color, rot
 
 
 def long_running_task(result_queue, bottom_border):
