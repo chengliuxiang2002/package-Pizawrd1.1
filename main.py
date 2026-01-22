@@ -7,10 +7,13 @@ import shutil  # 文件复制
 import threading
 import filetype  # 第三方库 filetype 1.2.0
 import fitz
+
+from package_core.PackageExtract.BGA_Function.Pin_process.BGA2Kicad import generate_kicad_file
 from PySide6.QtWidgets import QApplication, QMainWindow, \
     QHBoxLayout, QFileDialog, QMessageBox, QTableWidgetItem, QLabel, QPushButton
 
 # 第三方库 PySide6 6.5.3
+from PySide6.QtCore import QPoint, Qt, Signal, QEvent, QMargins, Slot, QLockFile, QDir
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtCore import QPoint, Qt, Signal, QEvent, QMargins, Slot
@@ -658,8 +661,20 @@ class MyWindow(QMainWindow):
         # self.detect = RecoThread(self, self.pdf_path,self.nav.currentPage(),self.package[self.current-1],self.package,self.type_dict) # 传入self.package ,self.nav.currentPage(),+1为实际PDF页
 
         self.detect.signal_end.connect(self.process_reco_data)
+        self.detect.signal_error.connect(self.show_error_popup)
 
         self.detect.start()
+
+    def show_error_popup(self, error_msg):
+        self.close_progress_dialog()
+
+        # 这里是在主线程，可以安全地操作 UI
+        QMessageBox.critical(self, '识别出现错误', error_msg)
+        self.ui.pushButton_open.setEnabled(1)
+        self.ui.pushButton_detect.setEnabled(1)
+        self.ui.pushButton_reco.setEnabled(1)
+        self.ui.pushButton_pre.setEnabled(1)
+        self.ui.pushButton_next.setEnabled(1)
 
     def app_edit(self):
         """
@@ -671,9 +686,103 @@ class MyWindow(QMainWindow):
 
     def app_save(self):
         """
-        对表格中数据进行保存
+        从表格读取参数并保存为 KiCad 格式 (目前仅支持 BGA)
         """
-        QMessageBox.information(self, '保存功能', '功能持续开发中')
+        # 1. 基础校验
+        if not self.package or self.current == 0:
+            QMessageBox.warning(self, '提示', '请先选择并识别一个封装对象')
+            return
+
+        # 获取当前显示的封装类型（支持用户编辑后的值）
+        current_type = self.ui.lineEdit_type.text().strip()
+
+        # 2. 类型检查 - 目前只对接了 BGA 生成器
+        if current_type != 'BGA':
+            QMessageBox.information(self, '提示', f'暂不支持 {current_type} 类型的 KiCad 导出，目前仅支持 BGA。')
+            return
+
+        # 3. 从 UI 表格提取参数 (读取用户可能修改过的数据)
+        # BGA_TABLE 对应行索引参考:
+        # Index 1: Pitch y (e) -> 用于 Pitch
+        # Index 2: Number of pins along X -> 用于 col_list
+        # Index 3: Number of pins along Y -> 用于 row_list
+        # Index 9: Ball Diameter Normal (b) -> 用于 pad_size
+        # 表格列索引: 2 代表 'Type' 列
+        try:
+            # --- 提取 Pitch ---
+            pitch_item = self.ui.tableWidget.item(1, 2)
+            pitch_text = pitch_item.text() if pitch_item else "0.0"
+            try:
+                pitch_val = float(pitch_text)
+            except ValueError:
+                pitch_val = 0.0
+
+            # --- 提取 Pad Size ---
+            pad_item = self.ui.tableWidget.item(9, 2)
+            pad_text = pad_item.text() if pad_item else "0.0"
+            try:
+                pad_val = float(pad_text)
+            except ValueError:
+                pad_val = 0.0
+
+            # --- 提取行/列列表 ---
+            # 表格中存储的是字符串形式的列表，如 "['1', '2', '3']"，需解析回列表
+            col_item = self.ui.tableWidget.item(2, 2)
+            col_text = col_item.text() if col_item else "[]"
+
+            row_item = self.ui.tableWidget.item(3, 2)
+            row_text = row_item.text() if row_item else "[]"
+
+            try:
+                col_list = ast.literal_eval(col_text) if col_text.strip() else []
+                row_list = ast.literal_eval(row_text) if row_text.strip() else []
+            except Exception:
+                # 如果解析失败（比如用户填了非列表格式），给提示
+                raise ValueError("行/列引脚必须是列表格式，例如 ['A', 'B'] 或 ['1', '2']")
+
+            if not isinstance(col_list, list) or not isinstance(row_list, list):
+                # 兼容处理：如果解析出来不是列表（例如单个数字），转为单元素列表
+                col_list = [str(col_list)] if col_list else []
+                row_list = [str(row_list)] if row_list else []
+
+            # 确保列表内元素为字符串
+            col_list = [str(i) for i in col_list]
+            row_list = [str(i) for i in row_list]
+
+            if not col_list or not row_list:
+                raise ValueError("行或列的引脚列表为空，请检查识别结果或手动补充。")
+
+        except Exception as e:
+            QMessageBox.critical(self, '参数错误', f'无法从表格解析有效参数: {str(e)}')
+            return
+
+        # 4. 生成默认文件名并弹出保存对话框
+        # 命名格式示例: BGA_8x8_A1_H8
+        default_name = f"BGA_{len(row_list)}x{len(col_list)}_{row_list[0]}{col_list[0]}_{row_list[-1]}{col_list[-1]}"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存 KiCad 封装文件",
+            os.path.join(self.history_path, default_name + ".kicad_mod"),
+            "KiCad Module Files (*.kicad_mod)"
+        )
+
+        if not file_path:
+            return
+
+        # 5. 调用生成函数写入文件
+        try:
+            module_name = os.path.splitext(os.path.basename(file_path))[0]
+            generate_kicad_file(
+                file_path=file_path,
+                module_name=module_name,
+                col_list=col_list,
+                row_list=row_list,
+                pitch=pitch_val,
+                pad_size=pad_val
+            )
+            QMessageBox.information(self, '成功', f'文件已保存至:\n{file_path}')
+        except Exception as e:
+            QMessageBox.critical(self, '保存失败', f'生成 KiCad 文件时发生错误: {str(e)}')
 
     def end_fir_process(self):
         """前处理筛选结束开始进行自动搜索"""
@@ -714,7 +823,11 @@ class MyWindow(QMainWindow):
 
     """识别函数的附加功能 -> 尺寸信息展示：表格选择+内容填充"""
     @Slot(int)
-    def process_reco_data(self):
+    def process_reco_data(self, status):
+
+        self.close_progress_dialog()
+        if status == 0:
+            return
         """处理识别结果"""
         # 处理数据
         self.package[self.current - 1]['reco_content'] = self.detect.result
@@ -1592,6 +1705,13 @@ class MyWindow(QMainWindow):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    # ==================== 单实例检测逻辑 ====================
+    lock_file = QLockFile(QDir.temp().absoluteFilePath("PackageWizard_Unique_Instance.lock"))
+    if not lock_file.tryLock(100):
+        # 如果获取失败，说明已经有一个实例在运行
+        QMessageBox.warning(None, "程序已运行", "程序已经在运行中，请勿重复打开！")
+        sys.exit(0)
+    # ======================================================
     myWindow = MyWindow()
     myWindow.showMaximized()
     sys.exit(app.exec())

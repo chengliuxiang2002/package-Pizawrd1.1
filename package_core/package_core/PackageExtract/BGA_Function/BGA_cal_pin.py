@@ -1,0 +1,2659 @@
+import os
+import shutil
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+
+from package_core.PackageExtract.BGA_Function.Pin_process.BGA_extract_pins import BGA_get_PIN
+from package_core.PackageExtract.BGA_Function.Pin_process.get_pinmap import get_pinmap
+
+from package_core.PackageExtract.get_pairs_data_present5_test import correct_serial_letters_data
+# from package_core.PackageExtract.yolox_onnx_py.onnx_output_bottom_pin_location import begain_output_bottom_pin_location
+from package_core.PackageExtract.yolox_onnx_py.onnx_detect_pin import onnx_output_pairs_data_pin_5
+from package_core.PackageExtract.yolox_onnx_py.onnx_output_bottom_pin_location import begain_output_bottom_pin_location
+from package_core.PackageExtract.yolox_onnx_py.onnx_yolox_output_waikuang import onnx_output_waikuang
+from package_core.PackageExtract.common_pipeline import dbnet_get_text_box, yolo_classify
+import cv2
+import numpy as np
+import math
+import statistics
+import queue
+import threading
+
+from package_core.UI.AI.AI_extract_pin import AI_extract_pin
+
+# 导入统一路径管理
+try:
+    from package_core.PackageExtract.yolox_onnx_py.model_paths import result_path
+except ModuleNotFoundError:
+    from pathlib import Path
+    def result_path(*parts):
+        return str(Path(__file__).resolve().parents[3] / 'Result' / Path(*parts))
+
+# 全局路径 - 使用统一的路径管理函数
+DATA = result_path('Package_extract', 'data')
+DATA_BOTTOM_CROP = result_path('Package_extract', 'data_bottom_crop')
+DATA_COPY = result_path('Package_extract', 'data_copy')
+ONNX_OUTPUT = result_path('Package_extract', 'onnx_output')
+OPENCV_OUTPUT = result_path('Package_extract', 'opencv_output')
+OPENCV_OUTPUT_LINE = result_path('Package_extract', 'opencv_output_yinXian')
+YOLO_DATA = result_path('Package_extract', 'yolox_data')
+BGA_BOTTOM = result_path('Package_extract', 'bga_bottom')
+PINMAP = result_path('Package_extract', 'pinmap')
+
+#1029
+from package_core.PackageExtract.onnx_use import Run_onnx_det
+from package_core.PackageExtract.onnx_use import (Run_onnx)
+page_path = result_path('Package_view', 'page')
+YOLOX_DATA = result_path('Package_extract', 'yolox_data')
+
+
+def choose_x(binary):  # 这个函数用于筛选出所有长度大于某自适应阈值的横线，函数的输入和输出都是二值图。自适应阈值的大小为：最长的成对出现的线的长度的0.6
+    height, width = binary.shape[:2]
+    cnt_length = []
+    length_cnt = []
+    contours, hierarchy = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        length = w
+        cnt_length.append(contour)
+        length_cnt.append(length)
+
+    length_num = sorted(length_cnt, reverse=True)
+    mx = min(height,
+             width) * 0.8  # 线的长度不能长过图片宽度的0.8，否则认为是类似package外框那样的东西（如果图片是经过package坐标矫正然后裁剪来的并且去除了外边框，那么可能就不需要这一阈值了）
+    th = 0
+    for i in range(len(length_num) - 1):
+        if length_num[i] <= mx and length_num[i] / length_num[i + 1] <= 1.05:  # 找出最长的成对出现（长度差不超过0.05）的线。
+            th = length_num[i] * 0.6  # 变量th就是那个自适应的阈值
+            break
+
+    cnts = []
+    for cnt, lgt in zip(cnt_length, length_cnt):
+        if mx >= lgt >= th:  # 根据阈值筛选线。
+            cnts.append(cnt)
+
+    binary_image = np.zeros((height, width, 1), dtype=np.uint8)
+    for cnt in cnts:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if h < 10:
+            cv2.line(binary_image, (int(x - (w * 0.05)), int(y + (h * 0.5))), (int(x + (w * 1.05)), int(y + (h * 0.5))),
+                     (255), 1)  # 将筛选出来的线画到空白图上并返回.线必须要延长一些，这样就算角是缺的，两条边也能相交，
+        else:
+            cv2.line(binary_image, (int(x - (w * 0.05)), int(y)), (int(x + (w * 1.05)), int(y)), (255), 1)
+            cv2.line(binary_image, (int(x - (w * 0.05)), int(y + h)), (int(x + (w * 1.05)), int(y + h)), (255), 1)
+    return binary_image
+
+
+def choose_y(binary):  # 这个函数用于筛选出所有长度大于某自适应阈值的竖线，与上面那个横线的一样
+    height, width = binary.shape[:2]
+    cnt_length = []
+    length_cnt = []
+    contours, hierarchy = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        length = h
+        cnt_length.append(contour)
+        length_cnt.append(length)
+
+    length_num = sorted(length_cnt, reverse=True)
+    mx = min(height, width) * 0.8
+    th = 0
+    for i in range(len(length_num) - 1):
+        if length_num[i] <= mx and length_num[i] / length_num[i + 1] <= 1.05:
+            th = length_num[i] * 0.6
+            break
+
+    cnts = []
+    for cnt, lgt in zip(cnt_length, length_cnt):
+        if mx >= lgt >= th:
+            cnts.append(cnt)
+
+    binary_image = np.zeros((height, width, 1), dtype=np.uint8)
+    for cnt in cnts:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if w < 10:
+            cv2.line(binary_image, (int(x + (w * 0.5)), int(y - (h * 0.05))), (int(x + (w * 0.5)), int(y + (h * 1.05))),
+                     (255), 1)
+        else:
+            cv2.line(binary_image, (int(x), int(y - (h * 0.05))), (int(x), int(y + (h * 1.05))), (255), 1)
+            cv2.line(binary_image, (int(x + w), int(y - (h * 0.05))), (int(x + w), int(y + (h * 1.05))), (255), 1)
+    return binary_image
+
+
+def waibiankuang(img):  # 这个函数实现主要功能，输入图片，输出bga的顶部和底部的外边框的坐标，这个坐标大部分情况下是精确的，有些时候可能稍有偏差。
+    src_img1 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)  # 下面这十几行用腐蚀膨胀的方法从img中提取出所有横线和竖线
+    AdaptiveThreshold = cv2.bitwise_not(src_img1)
+
+    # AdaptiveThreshold = cv2.adaptiveThreshold(AdaptiveThreshold, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, -2)
+    thresh, AdaptiveThreshold = cv2.threshold(AdaptiveThreshold, 122, 255, 0)  # 建议用固定阈值而不是自适应阈值
+
+    horizontal = AdaptiveThreshold.copy()
+    vertical = AdaptiveThreshold.copy()
+
+    horizontalSize = int(horizontal.shape[1] / 32)  # 横线和竖线的长度需大于图片宽、高的1/8
+    horizontalStructure = cv2.getStructuringElement(cv2.MORPH_RECT, (horizontalSize, 1))
+    horizontal = cv2.erode(horizontal, horizontalStructure)
+    horizontal = cv2.dilate(horizontal, horizontalStructure)
+
+    verticalSize = int(vertical.shape[0] / 32)  # 横线和竖线的长度需大于图片宽、高的1/8
+    verticalStructure = cv2.getStructuringElement(cv2.MORPH_RECT, (1, verticalSize))
+    vertical = cv2.erode(vertical, verticalStructure)
+    vertical = cv2.dilate(vertical, verticalStructure)
+
+    horizontal = choose_x(horizontal)  # choose_x这个函数用于筛选出所有长度大于某自适应阈值的横线，函数的输入和输出都是二值图
+    vertical = choose_y(vertical)  # choose_y这个函数用于筛选出所有长度大于某自适应阈值的竖线，函数的输入和输出都是二值图
+    mask = horizontal + vertical
+
+    contours, hierarchy = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+
+    height, width = img.shape[:2]
+    binary_image = np.zeros((height, width, 1), dtype=np.uint8)
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        area = w * h
+        area_cnt = cv2.contourArea(cnt)
+        if w > width / 32 and h > height / 32 and area_cnt / area >= 0.95:  # 筛选出长宽都足够大，并且是方形的轮廓。轮廓面积除以其外接矩形的面积，越接近1说明越接近方形
+            cv2.rectangle(binary_image, (x, y), (x + w, y + h), (255), 3)
+
+    contours2, hierarchy2 = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)  # 下面这几行用于合并重叠的矩形
+    wbk = []
+    for cnt in contours2:
+        x, y, w, h = cv2.boundingRect(cnt)
+        wbk.append((x + 3, y + 3, x + w - 4, y + h - 4))  # 这里减3是因为第101行画框时线宽为3
+    return wbk
+
+
+def get_waikaung():
+    source_folder = result_path('Package_extract', 'bga')
+    target_folder = f'{BGA_BOTTOM}'
+    if not os.path.exists(source_folder):
+        os.makedirs(source_folder)
+    if not os.path.exists(target_folder):
+        os.makedirs(target_folder)
+
+    for filename in os.listdir(source_folder):
+        if filename.endswith('.png') or filename.endswith('.jpg') or filename.endswith('.jpeg'):
+            img_path = os.path.join(source_folder, filename)
+            src_img = cv2.imread(img_path)
+
+            wbk = waibiankuang(src_img)
+
+            # rec = src_img.copy()
+            no = 1
+            for wk in wbk:
+                x1, y1, x2, y2 = wk
+                cropped_img = src_img[y1:y2, x1:x2]
+                # cv2.rectangle(rec, (x1, y1), (x2, y2), (255, 0, 0), 3)
+                # print(target_folder + '/' + str(no) + '.jpg')
+                cv2.imwrite(target_folder + '/' + str(no) + '.jpg', cropped_img)
+                no += 1
+            if no == 1:
+                print("在BGA三视图中未找到外框")
+            # target_path = os.path.join(target_folder, filename)
+            # cv2.imwrite(target_path, rec)
+
+def choose_x(binary):
+    height, width = binary.shape[:2]
+    cnt_length = []
+    length_cnt = []
+    contours, hierarchy = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        length = w
+        cnt_length.append(contour)
+        length_cnt.append(length)
+
+    length_num = sorted(length_cnt, reverse=True)
+    th = 0
+    for i in range(len(length_num) - 1):
+        if length_num[i] <= width * 0.8 and length_num[i] / length_num[i + 1] <= 1.05:
+            th = length_num[i] * 0.6
+            break
+
+    cnts = []
+    for cnt, lgt in zip(cnt_length, length_cnt):
+        if width * 0.8 >= lgt >= th:
+            cnts.append(cnt)
+
+    binary_image = np.zeros((height, width, 1), dtype=np.uint8)
+    for cnt in cnts:
+        x, y, w, h = cv2.boundingRect(cnt)
+        cv2.line(binary_image, (int(x - (w * 0.05)), int(y + (h * 0.5))), (int(x + (w * 1.05)), int(y + (h * 0.5))),
+                 (255), 1)
+
+    return binary_image
+
+def choose_y(binary):
+    height, width = binary.shape[:2]
+    cnt_length = []
+    length_cnt = []
+    contours, hierarchy = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        length = h
+        cnt_length.append(contour)
+        length_cnt.append(length)
+
+    length_num = sorted(length_cnt, reverse=True)
+    th = 0
+    for i in range(len(length_num) - 1):
+        if length_num[i] <= height * 0.8 and length_num[i] / length_num[i + 1] <= 1.05:
+            th = length_num[i] * 0.6
+            break
+
+    cnts = []
+    for cnt, lgt in zip(cnt_length, length_cnt):
+        if height * 0.8 >= lgt >= th:
+            cnts.append(cnt)
+
+    binary_image = np.zeros((height, width, 1), dtype=np.uint8)
+    for cnt in cnts:
+        x, y, w, h = cv2.boundingRect(cnt)
+        cv2.line(binary_image, (int(x + (w * 0.5)), int(y - (h * 0.05))), (int(x + (w * 0.5)), int(y + (h * 1.05))),
+                 (255), 1)
+
+    return binary_image
+
+def output_body(img_path):
+    src_img = cv2.imread(img_path)
+    src_img1 = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
+    AdaptiveThreshold = cv2.bitwise_not(src_img1)
+    thresh, AdaptiveThreshold = cv2.threshold(AdaptiveThreshold, 10, 255, 0)
+
+    horizontal = AdaptiveThreshold.copy()
+    vertical = AdaptiveThreshold.copy()
+
+    horizontalSize = int(horizontal.shape[1] / 8)
+    horizontalStructure = cv2.getStructuringElement(cv2.MORPH_RECT, (horizontalSize, 1))
+    horizontal = cv2.erode(horizontal, horizontalStructure)
+    horizontal = cv2.dilate(horizontal, horizontalStructure)
+
+    verticalSize = int(vertical.shape[0] / 8)
+    verticalStructure = cv2.getStructuringElement(cv2.MORPH_RECT, (1, verticalSize))
+    vertical = cv2.erode(vertical, verticalStructure)
+    vertical = cv2.dilate(vertical, verticalStructure)
+
+    horizontal = choose_x(horizontal)
+    vertical = choose_y(vertical)
+    mask = horizontal + vertical
+
+    contours, hierarchy = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+
+    height, width = src_img.shape[:2]
+    binary_image = np.zeros((height, width, 1), dtype=np.uint8)
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        area = w * h
+        area_cnt = cv2.contourArea(cnt)
+        if w > width / 8 and h > height / 8 and area_cnt / area >= 0.95:
+            cv2.rectangle(binary_image, (x, y), (x + w, y + h), (255), 3)
+
+    contours2, hierarchy2 = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    rec = src_img.copy()
+    for cnt in contours2:
+        x, y, w, h = cv2.boundingRect(cnt)
+        cv2.rectangle(rec, (x, y), (x + w - 3, y + h - 3), (255, 0, 0), 3)
+    # cv2.namedWindow('body', 0)
+    # cv2.imshow('body', rec)
+    # cv2.waitKey(0)
+    try:
+        location = np.array([[x + int(w / 40), y + int(h / 40), x + w - int(w / 40), y + h - int(h / 40)]])
+    except:
+        location = np.array([])
+        print("opencv函数找不到外框")
+    return location
+
+def crop_img_save(path_img, path_crop, x_min, y_min, x_max, y_max):
+    img = cv2.imread(path_img)
+    cropped = img[max(y_min, 0):min(y_max, img.shape[0]),
+              max(x_min, 0):min(x_max, img.shape[1])]  # 裁剪坐标为[y0:y1, x0:x1]必须为整数
+    cv2.imwrite(path_crop, cropped)
+    print("保存图", path_crop)
+
+
+
+def filter_a_b_old(a):
+    '''
+    a list[int,int]
+    滤波知道空白占比达到0.5
+    '''
+    # 统计平均值
+    mean1 = int(sum(a) / len(a))  # 高于mean1的值重设为mean1
+    for i in range(len(a)):
+        if a[i] > mean1:
+            a[i] = mean1
+
+    zer_num = 0
+    ratio = 0.6
+    key = 0
+    while zer_num / len(a) < 0.5:
+        key += 1
+        mean2 = int(sum(a) * (ratio + 0.05 * key) / len(a))  # 低于mean2的值重设为0
+        # print(ratio + 0.05 * key)
+        for i in range(len(a)):
+            if a[i] < mean2:
+                a[i] = 0
+        # 统计a中为0数量
+
+        for i in range(len(a)):
+            if a[i] == 0:
+                zer_num += 1
+
+    # 清除孤立的冲激
+    try:
+        for i in range(len(a)):
+            if i > 0:
+                if a[i] > 0 and a[i - 1] == 0 and a[i + 1] == 0:
+                    a[i] == 0
+    except:
+        pass
+    # 统计每一组的平均占用像素点数量
+    mean3 = []
+    every_pin = []  # 记录每组起始和终点位置
+    next_i = 0
+    for i in range(len(a)):
+        if i >= next_i:
+            if a[i] > 0:
+                long = 1  # 每组占用像素点数量
+                for j in range(len(a)):
+                    if j > i:
+                        if a[j] > 0:
+                            long += 1
+                        else:
+                            break
+                next_i = j
+                mid = {"from": i, "to": (next_i - 1)}
+                every_pin.append(mid)
+                mean3.append(long)
+    # print(mean3)
+    # print(every_pin)
+    if len(mean3) != 0:
+        mean4 = sum(mean3) / len(mean3)
+    else:
+        # 主动抛出异常"pin数量太少，算法不适用，请收集改pdf并反馈以便修复"
+
+        raise ValueError("pin数量太少，算法不适用，请记录此pdf并反馈以便修复")
+
+    # print(mean4)
+    # 消除过短的
+    for i in range(len(mean3)):
+        if mean3[i] / mean4 < 0.31:
+            for j in range(len(a)):
+                if every_pin[i]['from'] <= j <= every_pin[i]['to']:
+                    a[j] = 0
+
+    return a
+
+
+def filter_a_b(a):
+    '''
+    a list[int,int]
+    滤波知道空白占比达到0.5
+    '''
+    # 统计平均值
+    mean1 = int(sum(a) / len(a))  # 高于mean1的值重设为mean1
+    for i in range(len(a)):
+        if a[i] > mean1:
+            a[i] = mean1
+
+    zer_num = 0
+    ratio = 0.6
+    key = 0
+    while zer_num / len(a) < 0.5:
+        key += 1
+        mean2 = int(sum(a) * (ratio + 0.05 * key) / len(a))  # 低于mean2的值重设为0
+        # print(ratio + 0.05 * key)
+        for i in range(len(a)):
+            if a[i] < mean2:
+                a[i] = 0
+        # 统计a中为0数量
+
+        for i in range(len(a)):
+            if a[i] == 0:
+                zer_num += 1
+
+    # 清除孤立的冲激
+    try:
+        for i in range(len(a)):
+            if i > 0:
+                if a[i] > 0 and a[i - 1] == 0 and a[i + 1] == 0:
+                    a[i] == 0
+    except:
+        pass
+    # 统计每一组的平均占用像素点数量
+    mean3 = []
+    every_pin = []  # 记录每组起始和终点位置
+    next_i = 0
+    for i in range(len(a)):
+        if i >= next_i:
+            if a[i] > 0:
+                long = 1  # 每组占用像素点数量
+                for j in range(len(a)):
+                    if j > i:
+                        if a[j] > 0:
+                            long += 1
+                        else:
+                            break
+                next_i = j
+                mid = {"from": i, "to": (next_i - 1)}
+                every_pin.append(mid)
+                mean3.append(long)
+    # print(mean3)
+    # print(every_pin)
+    if len(mean3) != 0:
+        mean4 = sum(mean3) / len(mean3)
+    else:
+        # 主动抛出异常"pin数量太少，算法不适用，请收集改pdf并反馈以便修复"
+
+        raise ValueError("pin数量太少，算法不适用，请记录此pdf并反馈以便修复")
+
+    # print(mean4)
+    # 消除过短的
+    for i in range(len(mean3)):
+        if mean3[i] / mean4 < 0.31:
+            for j in range(len(a)):
+                if every_pin[i]['from'] <= j <= every_pin[i]['to']:
+                    a[j] = 0
+
+    return a
+
+
+def find_line_old(a):
+    '''
+    a:记录滤波后x轴或者y轴上每一个像素位置的像素投影 list[int,int]
+    '''
+    # 寻找突变点
+    c = []  # 记录突然变小的点
+    mean1 = int(sum(a) / len(a))
+    for i in range(len(a) - 1):
+        if a[i] > 0 and a[i + 1] == 0:
+            c.append(mean1 * 3)
+        else:
+            c.append(0)
+    c.append(0)
+
+    d = []
+    for i in range(len(a) - 1):
+        if a[i - 1] == 0 and a[i] > 0:
+            d.append(mean1 * 3)
+        else:
+            d.append(0)
+    d.append(0)
+
+    # 取两个突变点的中间
+    e = -1
+    f = -1
+    g = [0 for i in range(len(c))]
+    h = 0
+    x = 0
+    for i in range(len(c)):
+        if c[i] != 0:
+            e = i
+        if d[i] != 0:
+            f = i
+        if e != -1 and f != -1 and a[int((e + f) * 0.5)] == 0:
+            g[int((e + f) * 0.5)] = mean1 * 9
+            h += abs(e - f)
+            x += 1
+    # h = int(h/x)
+    # g_copy = g.copy()
+    # for i in range(len(g)):
+    #     if g[i] > 0:
+    #         for j in range(len(g)):
+    #             if j > i and g[j] > 0:
+    #                 if j - i > 4 * h:
+    #                     g_copy[int((i + j) * 0.5)] = mean1 * 9
+    #                 break
+    # 根据网格线的普遍规律，重组为规范的网格
+    # print("g", g)
+    wangge = []  # 记录每个网格的位置
+    for i in range(len(g)):
+        if g[i] > 0:
+            wangge.append(i)
+
+    # import statistics
+
+    # num = statistics.mode(wangge)
+    # print("众数为:", num)
+
+    num = 0
+    for i in range(len(wangge) - 1):
+        num += wangge[i + 1] - wangge[i]
+    num = int(num / (len(wangge) - 1))  # 网格的普遍间隔
+    # print("num", num)
+    # 根据网格的普遍间隔，
+    '''
+    1.找符合网格普遍间隔的线
+    2.针对这些线往左右看，推理出正确位置
+    '''
+    new_wangge = []
+    for i in range(len(wangge) - 1):
+        if abs((wangge[i + 1] - wangge[i]) - num) <= 3:
+            if wangge[i] not in new_wangge:
+                new_wangge.append(wangge[i])
+            if wangge[i + 1] not in new_wangge:
+                new_wangge.append(wangge[i + 1])
+    # print("wangge", wangge)
+    # print("new_wangge", new_wangge)
+    out_key = 0
+    acc = 0
+    while out_key != 1:
+        loc = 0
+        new_new_wangge = []
+        for i in range(len(new_wangge) - 1):
+            if i == len(new_wangge) - 2:
+                out_key = 1
+            if acc == 1:
+                if i == loc:
+                    if abs(new_wangge[i + 1] - new_wangge[i] - num) / num > 0.5:
+                        loc_1 = int(new_wangge[i] + num)
+                        loc_2 = int(new_wangge[i] + num)
+                        loc_1n = 0
+                        loc_2n = 0
+                        try:
+                            while a[loc_1] != 0:
+                                loc_1 += 1
+                                loc_1n += 1
+                                if loc_1 == int(new_wangge[i + 1] - 0.5 * num):
+                                    loc_1 = -1
+                                    loc_1n = 999
+                                    break
+                        except:
+                            loc_1 -= 1
+                        try:
+                            while a[loc_2] != 0:
+                                loc_2 -= 1
+                                loc_2n += 1
+                                if loc_2 == int(new_wangge[i] + 0.5 * num):
+                                    loc_2 = -1
+                                    loc_2n = 999
+                                    break
+                        except:
+                            loc_2 += 1
+                        if loc_1 == loc_2 == -1:
+                            loc = int((new_wangge[i] + new_wangge[i + 1]) * 0.5)
+                        else:
+                            if loc_1n < loc_2n:
+                                loc = loc_1
+                            else:
+                                loc = loc_2
+                        new_wangge.append(loc)
+                        new_wangge.sort()
+                        break
+            else:
+
+                if abs(new_wangge[i + 1] - new_wangge[i] - num) / num > 0.5:
+                    acc = 1
+                    loc_1 = int(new_wangge[i] + num)
+                    loc_2 = int(new_wangge[i] + num)
+                    loc_1n = 0
+                    loc_2n = 0
+                    try:
+                        while a[loc_1] != 0:
+                            loc_1 += 1
+
+                            loc_1n += 1
+                            if loc_1 == int(new_wangge[i + 1] - 0.5 * num):
+                                loc_1 = -1
+                                loc_1n = 999
+                                break
+                    except:
+                        loc_1 -= 1
+                    try:
+                        while a[loc_2] != 0:
+                            loc_2 -= 1
+                            loc_2n += 1
+                            if loc_2 == int(new_wangge[i] + 0.5 * num):
+                                loc_2 = -1
+                                loc_2n = 999
+                                break
+                    except:
+                        loc_2 += 1
+                    if loc_1 == loc_2 == -1:
+                        loc = int((new_wangge[i] + new_wangge[i + 1]) * 0.5)
+                    else:
+                        if loc_1n < loc_2n:
+                            loc = loc_1
+                        else:
+                            loc = loc_2
+                    new_wangge.append(loc)
+                    new_wangge.sort()
+                    break
+            # new_wangge = (new_new_wangge + new_wangge)
+
+    # print("new_wangge", new_wangge)
+    # 按照规律扩展到全图
+    leng = len(g)
+    while new_wangge[0] > num:
+        loc_1 = int(new_wangge[0] - num)
+        loc_2 = int(new_wangge[0] - num)
+        loc_1n = 0
+        loc_2n = 0
+        try:
+            while a[loc_1] != 0:
+                loc_1 -= 1
+                loc_1n += 1
+        except:
+            loc_1 += 1
+        try:
+            while a[loc_2] != 0:
+                loc_2 += 1
+                loc_2n += 1
+        except:
+            loc_2 -= 1
+        if loc_1n < loc_2n:
+            loc = loc_1
+        else:
+            loc = loc_2
+        new_wangge.append(loc)
+        new_wangge.sort()
+    while leng - 1 - new_wangge[len(new_wangge) - 1] > num:
+        loc_1 = int(new_wangge[len(new_wangge) - 1] + num)
+        loc_2 = int(new_wangge[len(new_wangge) - 1] + num)
+        loc_1n = 0
+        loc_2n = 0
+        try:
+            while a[loc_1] != 0:
+                loc_1 += 1
+                loc_1n += 1
+        except:
+            loc_1 -= 1
+        try:
+            while a[loc_2] != 0:
+                loc_2 -= 1
+                loc_2n += 1
+        except:
+            loc_2 += 1
+        if loc_1n < loc_2n:
+            loc = loc_1
+        else:
+            loc = loc_2
+        new_wangge.append(loc)
+        new_wangge.sort()
+    if new_wangge[0] / num > 0.8:
+        new_wangge.append(0)
+        new_wangge.sort()
+    if (leng - 1 - new_wangge[len(new_wangge) - 1]) / num > 0.8:
+        new_wangge.append(leng - 1)
+    # print("new_wangge", new_wangge)
+    new_g = [0 for i in range(len(c))]
+    for i in range(len(new_g)):
+        if i in new_wangge:
+            new_g[i] = 9999
+    # print("new_g", new_g)
+    return new_g
+
+
+def remove_min_max(lst):
+    if len(lst) < 4:
+        print("列表中元素不足4个，无法删除最小值和最大值")
+        return lst
+
+    # 找到最小值和最大值
+    min_value = min(lst)
+    max_value = max(lst)
+
+    # 删除最小值
+    lst.remove(min_value)
+
+    # 删除最大值
+    lst.remove(max_value)
+
+    return lst
+
+
+
+
+def find_line(a, ave_width, test_mode):
+    # test_mode = True # 调试开关
+
+    # --- 1. 寻找突变点 (保留原逻辑) ---
+    c = []
+    mean1 = int(sum(a) / len(a)) if len(a) > 0 else 0
+    for i in range(len(a) - 1):
+        if a[i] > 0 and a[i + 1] == 0:
+            c.append(mean1 * 3)
+        else:
+            c.append(0)
+    c.append(0)
+
+    d = []
+    d.append(0)
+    for i in range(1, len(a)):
+        if a[i - 1] == 0 and a[i] > 0:
+            d.append(mean1 * 3)
+        else:
+            d.append(0)
+
+    for i in range(len(c)):
+        if c[i] != 0 and d[i] != 0:
+            c[i] = 0
+            d[i] = 0
+
+    # --- 2. 初始网格生成 (保留原逻辑) ---
+    g = [0 for i in range(len(c))]
+    for i in range(len(c)):
+        if c[i] > 0:
+            e = i
+            for j in range(i + 1, len(c)):
+                if d[j] != 0:
+                    f = j
+                    if abs(e - f) > 2 * ave_width:
+                        # 间隔过大不直接连，保留两端
+                        if e + 1 < len(g): g[e + 1] = mean1 * 9
+                        if f - 1 >= 0: g[f - 1] = mean1 * 9
+                        break
+                    else:
+                        idx = int((e + f) * 0.5)
+                        if idx < len(g): g[idx] = mean1 * 9
+                        break
+
+    # --- 3. 提取初始坐标 ---
+    wangge = []
+    for i in range(len(g)):
+        if g[i] > 0:
+            wangge.append(i)
+
+    if not wangge:
+        return g, []
+
+    # --- 4. 计算标准间距 num (保留原逻辑) ---
+    # 这里加一个去重排序，防止初始就有重复点
+    wangge = sorted(list(set(wangge)))
+
+    find_num_list = []
+    for i in range(len(wangge) - 1):
+        find_num_list.append(abs(wangge[i] - wangge[i + 1]))
+
+    find_num_list = remove_min_max(find_num_list)
+
+    if not find_num_list:
+        num = ave_width if ave_width > 0 else 20
+    else:
+        try:
+            num = statistics.mode(find_num_list)
+        except:
+            num = int(sum(find_num_list) / len(find_num_list))
+
+    if num <= 0: num = 20
+
+    if test_mode: print("计算出的标准间距 num:", num)
+
+    # ==========================================
+    # --- 5. 核心修复：基于原思想的补全循环 ---
+    # ==========================================
+    new_wangge = wangge.copy()
+
+    # 限制最大循环次数，防止极端情况死锁 (原代码死循环就在这里)
+    for m in range(10):
+        out_key = 0
+        changed_this_round = False  # 标记这一轮有没有改动
+
+        while out_key != 1:
+            inserted = False
+            # 遍历每一个间距
+            # 注意：倒序遍历或者每次插入后 break 重新开始，防止索引混乱。
+            # 这里采用你原来的策略：插入后 break，重新 while
+            for i in range(len(new_wangge) - 1):
+                gap = new_wangge[i + 1] - new_wangge[i]
+
+                # 【关键修复】：
+                # 原条件：abs(gap - num)/num > 0.5  -> 既杀大也杀小，导致死循环
+                # 新条件：gap > num * 1.5          -> 只杀大（缺线），不理会小（杂波）
+                if gap > num * 1.5:
+
+                    # 理论上的插入点（均匀位置）
+                    ideal_loc = int(new_wangge[i] + num)
+
+                    # 定义搜索范围：只在理论位置左右 num*0.3 范围内找波峰
+                    # 这样保证了“均匀性”，不会被远处的杂波带偏
+                    search_radius = int(num * 0.3)
+
+                    # --- 既然是原思想，保留 loc_1 和 loc_2 的搜索逻辑 ---
+
+                    # 1. 向右看 (loc_1)
+                    loc_1 = ideal_loc
+                    loc_1n = 0
+                    # 在小范围内微调
+                    search_start = max(new_wangge[i] + 1, ideal_loc - search_radius)
+                    search_end = min(new_wangge[i + 1] - 1, ideal_loc + search_radius)
+
+                    # 尝试找波峰 (a[x] > 0)
+                    # 优先找离 ideal_loc 最近的波峰
+                    best_dist = 9999
+                    found_peak = False
+
+                    for x in range(search_start, search_end):
+                        if x < len(a) and a[x] > 0:
+                            dist = abs(x - ideal_loc)
+                            if dist < best_dist:
+                                best_dist = dist
+                                loc_1 = x
+                                loc_1n = dist  # 用距离作为权重
+                                found_peak = True
+
+                    if not found_peak:
+                        loc_1n = 999  # 没找到波峰，权重降低
+
+                    # 2. 向左看 (loc_2) - 其实在确定性补全里，向左向右通常指向同一个区域
+                    # 为了保留原代码逻辑结构，我们这里假设 loc_2 也是找同一个区域
+                    # 但原代码 loc_2 是 new_wangge[i] + num 从右往左搜，loc_1 是从左往右搜
+                    # 我们简化一下：如果 loc_1 找到了波峰，就用波峰；没找到，就用 ideal_loc
+
+                    final_loc = loc_1 if found_peak else ideal_loc
+
+                    # 执行插入
+                    if final_loc not in new_wangge:
+                        new_wangge.insert(i + 1, final_loc)  # 直接插在当前点后面
+                        inserted = True
+                        changed_this_round = True
+                        break  # 跳出 for，重新计算 gap
+
+            if not inserted:
+                out_key = 1  # 这一轮检查完毕，没有需要插入的了
+
+        if not changed_this_round:
+            break  # 如果这一大轮都没有任何变动，说明已经稳态，彻底结束
+
+    # --- 6. 边缘扩展 (Start & End) ---
+    # 这部分保持均匀性非常重要，强制按 num 扩展
+
+    # 向左扩展
+    safety = 0
+    while new_wangge and new_wangge[0] > num * 0.8:  # 只要左边还有空间
+        safety += 1
+        if safety > 50: break
+
+        target = int(new_wangge[0] - num)
+        # 在 target 附近找波峰
+        best_loc = target
+        min_dist = 999
+        found = False
+        start_s = max(0, target - int(num * 0.3))
+        end_s = min(new_wangge[0] - 1, target + int(num * 0.3))
+
+        for x in range(start_s, end_s):
+            if x < len(a) and a[x] > 0:
+                d_val = abs(x - target)
+                if d_val < min_dist:
+                    min_dist = d_val
+                    best_loc = x
+                    found = True
+
+        # 如果找到波峰且不重叠，用波峰；否则用理论位置
+        insert_val = best_loc if found else target
+        if insert_val >= 0 and insert_val < new_wangge[0]:
+            new_wangge.insert(0, insert_val)
+        else:
+            break  # 防止死循环
+
+    # 向右扩展
+    safety = 0
+    leng = len(a)
+    while new_wangge and (leng - 1 - new_wangge[-1]) > num * 0.8:
+        safety += 1
+        if safety > 50: break
+
+        target = int(new_wangge[-1] + num)
+        best_loc = target
+        min_dist = 999
+        found = False
+        start_s = max(new_wangge[-1] + 1, target - int(num * 0.3))
+        end_s = min(leng - 1, target + int(num * 0.3))
+
+        for x in range(start_s, end_s):
+            if x < len(a) and a[x] > 0:
+                d_val = abs(x - target)
+                if d_val < min_dist:
+                    min_dist = d_val
+                    best_loc = x
+                    found = True
+
+        insert_val = best_loc if found else target
+        if insert_val < leng and insert_val > new_wangge[-1]:
+            new_wangge.append(insert_val)
+        else:
+            break
+
+    # --- 7. 输出 ---
+    new_g = [0 for i in range(len(c))]
+    for i in range(len(new_g)):
+        if i in new_wangge:
+            new_g[i] = 9999
+
+    return new_g, wangge
+
+
+def empty_folder(folder_path):
+    try:
+        shutil.rmtree(folder_path)
+    except FileNotFoundError:
+        print(f"文件夹 {folder_path} 不存在！无须删除文件夹")
+
+
+def get_pin_grid_old(a, b, c, d):
+    x_min = -1
+    # print(a)
+    x_max = -1
+    for i in range(len(a)):
+        if a[i] > 0:
+            if x_min == -1:
+                x_min = i
+            x_max = i
+    y_min = -1
+    y_max = -1
+    for i in range(len(b)):
+        if b[i] > 0:
+            if y_min == -1:
+                y_min = i
+            y_max = i
+    c[x_min] = 100
+    c[x_max] = 100
+    d[y_min] = 100
+    d[y_max] = 100
+    lie_line = []  # 记录竖向直线所在位置
+    lie_num = 0
+    for i in range(len(c)):
+        if c[i] > 0:
+            lie_num += 1
+            lie_line.append(i)
+    # print(lie_line)
+    hang_line = []  # 记录横向直线所在位置
+    hang_num = 0
+    for i in range(len(d)):
+        if d[i] > 0:
+            hang_num += 1
+            hang_line.append(i)
+    # print(hang_line)
+    # print("lie_line", lie_line)
+    # print("hang_line", hang_line)
+    # 将距离相近的行列线合并取中间没有pin的位置
+    length = []  # 存储每组网格之间的距离
+    for i in range(len(lie_line) - 1):
+        length.append(int(lie_line[i + 1] - lie_line[i]))
+    average_lie_length = sum(length) / len(length)
+    # print("average_lie_length", average_lie_length)
+    for i in range(len(lie_line) - 1):
+        if (lie_line[i + 1] - lie_line[i]) / average_lie_length < 0.5:
+            new_lie_line_location = lie_line[i] + 1
+
+            while a[new_lie_line_location] != 0:
+                if new_lie_line_location == lie_line[i] + 1:
+                    break
+                new_lie_line_location += 1
+            lie_line[i] = new_lie_line_location
+            lie_line[i + 1] = new_lie_line_location
+            lie_line.sort()
+    lie_line = list(set(lie_line))
+    lie_line.sort()
+    # print("lie_line", lie_line)
+
+    length = []  # 存储每组网格之间的距离
+    for i in range(len(hang_line) - 1):
+        length.append(int(hang_line[i + 1] - hang_line[i]))
+    average_hang_length = sum(length) / len(length)
+    for i in range(len(hang_line) - 1):
+        if (hang_line[i + 1] - hang_line[i]) / average_hang_length < 0.5:
+            new_hang_line_location = hang_line[i] + 1
+
+            while a[new_hang_line_location] != 0:
+                if new_hang_line_location == hang_line[i] + 1:
+                    break
+                new_hang_line_location += 1
+            hang_line[i] = new_hang_line_location
+            hang_line[i + 1] = new_hang_line_location
+            # hang_line = list(set(hang_line))
+            hang_line.sort()
+    hang_line = list(set(hang_line))
+    hang_line.sort()
+    # print("hang_line", hang_line)
+
+    hang_num = len(hang_line)
+    lie_num = len(lie_line)
+    # print("行数", hang_num)
+    # print("列数", lie_num)
+    pin_map = np.zeros((hang_num - 1, lie_num - 1, 5))
+    no = 0
+    for i in range(len(lie_line) - 1):
+        pin_map[:, no, 0] = lie_line[i]
+        pin_map[:, no, 2] = lie_line[i + 1]
+        no += 1
+    no = 0
+    for i in range(len(hang_line) - 1):
+        pin_map[no, :, 1] = hang_line[i]
+        pin_map[no, :, 3] = hang_line[i + 1]
+        no += 1
+
+    # print(pin_map)
+    return pin_map
+
+
+def get_pin_grid(a, b, c, d, test_mode):
+    x_min = -1
+    # print(a)
+    x_max = -1
+    for i in range(len(a)):
+        if a[i] > 0:
+            if x_min == -1:
+                x_min = i
+            x_max = i
+    y_min = -1
+    y_max = -1
+    for i in range(len(b)):
+        if b[i] > 0:
+            if y_min == -1:
+                y_min = i
+            y_max = i
+    c[x_min] = 100
+    c[x_max] = 100
+    d[y_min] = 100
+    d[y_max] = 100
+    lie_line = []  # 记录竖向直线所在位置
+    lie_num = 0
+    for i in range(len(c)):
+        if c[i] > 0:
+            lie_num += 1
+            lie_line.append(i)
+
+    # print(lie_line)
+    hang_line = []  # 记录横向直线所在位置
+    hang_num = 0
+    for i in range(len(d)):
+        if d[i] > 0:
+            hang_num += 1
+            hang_line.append(i)
+
+    # print(hang_line)
+    # print("lie_line", lie_line)
+    # print("hang_line", hang_line)
+    # 将距离相近的行列线合并取中间没有pin的位置
+    length = []  # 存储每组网格之间的距离
+    for i in range(len(lie_line) - 1):
+        length.append(int(lie_line[i + 1] - lie_line[i]))
+    average_lie_length = sum(length) / len(length)
+    if test_mode:
+        print("average_lie_length", average_lie_length)
+    for i in range(len(lie_line) - 1):
+        if (lie_line[i + 1] - lie_line[i]) / average_lie_length <= 0.55:
+            if test_mode:
+                print("len(a)", len(a))
+                print("len(c)", len(c))
+                print("lie_line[i] , lie_line[i+1]", lie_line[i], lie_line[i + 1])
+            new_lie_line_location = lie_line[i] + 1
+
+            while a[new_lie_line_location] != 0:
+                if new_lie_line_location == lie_line[i] + 1:
+                    break
+                new_lie_line_location += 1
+                if new_lie_line_location >= len(a) - 1:
+                    break
+            lie_line[i] = new_lie_line_location
+            lie_line[i + 1] = new_lie_line_location
+            lie_line.sort()
+    lie_line = list(set(lie_line))
+    lie_line.sort()
+    # print("lie_line", lie_line)
+
+    length = []  # 存储每组网格之间的距离
+    for i in range(len(hang_line) - 1):
+        length.append(int(hang_line[i + 1] - hang_line[i]))
+    average_hang_length = sum(length) / len(length)
+    for i in range(len(hang_line) - 1):
+        if (hang_line[i + 1] - hang_line[i]) / average_hang_length <= 0.55:
+
+            new_hang_line_location = hang_line[i] + 1
+
+            while new_hang_line_location < len(a) and a[new_hang_line_location] != 0:
+                if new_hang_line_location == hang_line[i] + 1:
+                    break
+                new_hang_line_location += 1
+                if new_hang_line_location >= len(a) - 1:
+                    break
+            hang_line[i] = new_hang_line_location
+            hang_line[i + 1] = new_hang_line_location
+            # hang_line = list(set(hang_line))
+            hang_line.sort()
+    hang_line = list(set(hang_line))
+    hang_line.sort()
+    # print("hang_line", hang_line)
+
+    hang_num = len(hang_line)
+    lie_num = len(lie_line)
+    # print("行数", hang_num)
+    # print("列数", lie_num)
+    pin_map = np.zeros((hang_num - 1, lie_num - 1, 5))
+    no = 0
+    for i in range(len(lie_line) - 1):
+        pin_map[:, no, 0] = lie_line[i]
+        pin_map[:, no, 2] = lie_line[i + 1]
+        no += 1
+    no = 0
+    for i in range(len(hang_line) - 1):
+        pin_map[no, :, 1] = hang_line[i]
+        pin_map[no, :, 3] = hang_line[i + 1]
+        no += 1
+
+    # print(pin_map)
+    return pin_map
+
+
+def show_pin_grid(pin_map, c, d):
+    '''
+    展示网格
+    '''
+
+    # path = r'data_bottom_crop/pinmap.jpg'
+    # img = cv2.imread(path)
+    # point_color = (0, 255, 0)  # BGR
+    # thickness = 5
+    # lineType = 4
+    #
+    # for i in range(len(c)):
+    #     if c[i] > 0:
+    #         ptStart = (i, 0)
+    #         ptEnd = (i, len(c))
+    #         cv2.line(img, ptStart, ptEnd, point_color, thickness, lineType)
+    #
+    # for i in range(len(d)):
+    #     if d[i] > 0:
+    #         ptStart = (0, i)
+    #         ptEnd = (len(d), i)
+    #         cv2.line(img, ptStart, ptEnd, point_color, thickness, lineType)
+    #
+    # cv2.imshow("img", img)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
+    path = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
+    img = cv2.imread(path)
+    point_color = (0, 255, 0)  # BGR
+    thickness = 1
+    lineType = 4
+    for i in range(len(pin_map)):
+        for j in range(len(pin_map[i])):
+            try:
+                ptStart = (int(pin_map[i][j][0]), int(pin_map[i][j][1]))
+                ptEnd = (int(pin_map[i][j][0]), int(pin_map[i][j][3]))
+                cv2.line(img, ptStart, ptEnd, point_color, thickness, lineType)
+                ptStart = (int(pin_map[i][j][2]), int(pin_map[i][j][1]))
+                ptEnd = (int(pin_map[i][j][2]), int(pin_map[i][j][3]))
+                cv2.line(img, ptStart, ptEnd, point_color, thickness, lineType)
+                ptStart = (int(pin_map[i][j][0]), int(pin_map[i][j][1]))
+                ptEnd = (int(pin_map[i][j][2]), int(pin_map[i][j][1]))
+                cv2.line(img, ptStart, ptEnd, point_color, thickness, lineType)
+                ptStart = (int(pin_map[i][j][0]), int(pin_map[i][j][3]))
+                ptEnd = (int(pin_map[i][j][2]), int(pin_map[i][j][3]))
+                cv2.line(img, ptStart, ptEnd, point_color, thickness, lineType)
+            except:
+                pass
+    cv2.namedWindow('img', cv2.WINDOW_NORMAL)
+    cv2.imshow("img", img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+def get_entropy(img_):
+    x, y = img_.shape[0:2]
+    img_ = cv2.resize(img_, (100, 100))  # 缩小的目的是加快计算速度
+    tmp = []
+    for i in range(256):
+        tmp.append(0)
+    val = 0
+    k = 0
+    res = 0
+    img = np.array(img_)
+    for i in range(len(img)):
+        for j in range(len(img[i])):
+            val = img[i][j]
+            # print(val)
+            # print(tmp)
+            tmp[val] = float(tmp[val] + 1)
+            k = float(k + 1)
+    for i in range(len(tmp)):
+        tmp[i] = float(tmp[i] / k)
+    for i in range(len(tmp)):
+        if (tmp[i] == 0):
+            res = res
+        else:
+            res = float(res - tmp[i] * (math.log(tmp[i]) / math.log(2.0)))
+    return res
+
+
+# def
+#     img = cv2.imread('image.jpg', 0)
+#     # 将图像转换为灰度图
+#     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+#     # 计算图像的直方图
+#     hist, _ = np.histogram(gray, bins=256, range=[0, 256])
+#     # 计算直方图的概率分布
+#     prob = hist / (gray.shape[0] * gray.shape[1])
+#     # 计算信息熵
+#     entropy = -np.sum(prob * np.log2(prob + np.finfo(float).eps))
+#     print('Image entropy:', entropy)
+def cal_grid_shang(pin_map, test_mode):
+    path = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
+    img = cv2.imread(path)
+    new_pin_map = np.zeros((pin_map.shape[0], pin_map.shape[1]))
+    for i in range(len(pin_map)):
+        for j in range(len(pin_map[i])):
+            img1 = img[int(pin_map[i][j][1]): int(pin_map[i][j][3]), int(pin_map[i][j][0]): int(pin_map[i][j][2])]
+            gray = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+            # 计算图像的直方图
+            hist, _ = np.histogram(gray, bins=256, range=[0, 256])
+            # 计算直方图的概率分布
+            prob = hist / (gray.shape[0] * gray.shape[1])
+            # 计算信息熵
+            entropy = -np.sum(prob * np.log2(prob + np.finfo(float).eps))
+            new_pin_map[i][j] = entropy
+    if test_mode:
+        print(new_pin_map)
+    return new_pin_map
+
+def cal_gray_variance(pin_map):
+    path = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
+    img = cv2.imread(path, 0)
+    new_pin_map = np.zeros((pin_map.shape[0], pin_map.shape[1]))
+    for t in range(len(pin_map)):
+        for s in range(len(pin_map[t])):
+            img1 = img[int(pin_map[t][s][1]): int(pin_map[t][s][3]), int(pin_map[t][s][0]): int(pin_map[t][s][2])]
+            height, width = img1.shape
+            size = img1.size
+
+            p = [0] * 256
+
+            for i in range(height):
+                for j in range(width):
+                    p[img1[i][j]] += 1
+
+            m = 0
+            for i in range(256):
+                p[i] /= size
+                m += i * p[i]
+
+            var_value = 0
+            for i in range(256):
+                var_value += (i - m) * (i - m) * p[i]
+            new_pin_map[t][s] = var_value
+
+    return new_pin_map
+def output_pin(pin_map):
+    print("每个网格中的信息熵计算值:")
+    print(pin_map.astype(int))
+    for i in range(len(pin_map)):
+        for j in range(len(pin_map[i])):
+            if pin_map[i][j] > 2:
+                pin_map[i][j] = 1
+            else:
+                pin_map[i][j] = 0
+    print("行:", pin_map.shape[0], "列:", pin_map.shape[1])
+
+    # print(pin_map.astype(int))
+    return pin_map
+
+
+def cut_pinmap(pin_map, color, test_mode):
+    while np.array_equal(pin_map[0], np.zeros(pin_map.shape[1]).astype(int)):
+        pin_map = np.delete(pin_map, 0, 0)
+        color = np.delete(color, 0, 0)
+    while np.array_equal(pin_map[len(pin_map) - 1], np.zeros(pin_map.shape[1]).astype(int)):
+        pin_map = np.delete(pin_map, [len(pin_map) - 1], 0)
+        color = np.delete(color, [len(color) - 1], 0)
+    while np.array_equal(pin_map[:, 0], np.zeros(pin_map.shape[0]).astype(int)):
+        pin_map = np.delete(pin_map, [0], 1)
+        color = np.delete(color, [0], 1)
+    while np.array_equal(pin_map[:, -1], np.zeros(pin_map.shape[0]).astype(int)):
+        pin_map = np.delete(pin_map, -1, 1)
+        color = np.delete(color, -1, 1)
+    if test_mode:
+        print(pin_map.astype(int))
+    return pin_map, color
+
+def judge_singular_point(arr, color_map, test_mode):
+    '''
+
+    :param pin_map:
+    :param color_map:
+    :param test_mode:
+    :return:
+    '''
+    rows, cols = arr.shape
+    for i in range(rows):
+        for j in range(cols):
+            if arr[i, j] == 0:
+                neighbors = []
+
+                # 上下左右四个方向，边界外的默认不计入
+                if i > 0:
+                    neighbors.append(arr[i - 1, j])  # 上
+                if i < rows - 1:
+                    neighbors.append(arr[i + 1, j])  # 下
+                if j > 0:
+                    neighbors.append(arr[i, j - 1])  # 左
+                if j < cols - 1:
+                    neighbors.append(arr[i, j + 1])  # 右
+
+                ones_count = sum(1 for val in neighbors if val == 1)
+
+                # 判断是否符合奇异点标准
+                if len(neighbors) == 4 and ones_count >= 3:  # 中间区域
+                    color_map[i][j] = 3
+                elif len(neighbors) == 3 and ones_count == 3:  # 边缘非角落
+                    color_map[i][j] = 3
+                elif len(neighbors) == 2 and ones_count == 2:  # 四个角落
+                    color_map[i][j] = 3
+    # rows, cols = arr.shape
+    #
+    #
+    # for i in range(rows):
+    #     for j in range(cols):
+    #         if arr[i, j] == 0:
+    #             count = 0
+    #             # 上
+    #             if i > 0 and arr[i - 1, j] == 1:
+    #                 count += 1
+    #             else:
+    #                 count += 0
+    #             # 下
+    #             if i < rows - 1 and arr[i + 1, j] == 1:
+    #                 count += 1
+    #             else:
+    #                 count += 0
+    #             # 左
+    #             if j > 0 and arr[i, j - 1] == 1:
+    #                 count += 1
+    #             else:
+    #                 count += 0
+    #             # 右
+    #             if j < cols - 1 and arr[i, j + 1] == 1:
+    #                 count += 1
+    #             else:
+    #                 count += 0
+    #
+    #             # 判断是否至少有三面是 1
+    #             if count >= 3:
+    #                 color_map[i][j] = 3
+    return arr, color_map
+
+# # def output_color(color_map):
+# #
+# #     for i in range(len(color_map)):
+# #         for j in range(len(color_map[i])):
+# #             if color_map[i][j] == 0:
+# #                 color_map[i][j] =
+# #             elif color_map[i][j] == 1:
+# #                 color_map[i][j] = 2
+# #             elif color_map[i][j] == 2:
+# #                 color_map[i][j] = 3
+# #             elif color_map
+#
+# def find_right_img():
+#     # 检测文件夹下有几张图片
+#     path =BGA_BOTTOM
+#     filelist = os.listdir(path)
+#
+#     if len(filelist) == 0:
+#         # 从data文件夹把bottom.jpg复制到bga_bottom文件夹下
+#         print("在三视图中没有找到外框")
+#         shutil.copyfile(f'{DATA}/bottom.jpg', f'{BGA_BOTTOM}/bottom.jpg')
+#
+#     filelist = os.listdir(path)
+#     if len(filelist) == 1:
+#         # 将文件夹bga_bottom下唯一一张图片改名为bottom.jpg
+#         os.rename(path + '/' + filelist[0], f'{BGA_BOTTOM}/bottom.jpg')
+#         get_pinmap()
+#
+#     if len(filelist) == 2:
+#         print("在三视图中找到两个外框")
+#         img_path1 = path + '/' + filelist[0]
+#         pin1 = onnx_output_pairs_data_pin_5(img_path1)
+#         img_path2 = path + '/' + filelist[1]
+#         pin2 = onnx_output_pairs_data_pin_5(img_path2)
+#         if len(pin1) > len(pin2):
+#             pin = pin1
+#             os.remove(img_path2)
+#             # 改图片名为pinmap.jpg
+#             shutil.copyfile(img_path1, f'{DATA_BOTTOM_CROP}/pinmap.jpg')
+#
+#         else:
+#             pin = pin2
+#             os.remove(img_path1)
+#             shutil.copyfile(img_path2, f'{DATA_BOTTOM_CROP}/pinmap.jpg')
+#             # os.rename(img_path2, r'data_bottom_crop/pinmap.jpg')
+#
+#         # pin中找x_min和y_min和x_max和y_max
+#
+#         x_min = 9999
+#         y_min = 9999
+#         x_max = 0
+#         y_max = 0
+#         for i in range(len(pin)):
+#             if pin[i][0] < x_min:
+#                 x_min = pin[i][0]
+#             if pin[i][1] < y_min:
+#                 y_min = pin[i][1]
+#             if pin[i][2] > x_max:
+#                 x_max = pin[i][2]
+#             if pin[i][3] > y_max:
+#                 y_max = pin[i][3]
+#         # 判断x_min和y_min和x_max和y_max所占的面积是否占比超过0.4
+#         img = cv2.imread(f'{DATA_BOTTOM_CROP}/pinmap.jpg')
+#         if (x_max - x_min) * (y_max - y_min) / img.shape[0] * img.shape[1] > 0.4:
+#             crop_img_save(f'{DATA_BOTTOM_CROP}/pinmap.jpg', f'{DATA_BOTTOM_CROP}/pinmap.jpg', max(int(x_min) - 1, 0),
+#                           max(int(y_min) - 1, 0), min(int(x_max) + 1, img.shape[1]),
+#                           min(int(y_max) + 1, img.shape[0]))
+#             print("经过yolox辅助得到pinmap")
+
+
+def yolox_find_waikuang(location):
+    '''
+    在bottom图上拿yolox检测外框，再用yolox检测pin，按照pin的四个坐标的极限位置裁剪下pinmap
+    '''
+    path = f'{DATA}/bottom.jpg'
+    # img = cv2.imread(path)
+    # location = onnx_output_waikuang(path)
+    print("location", location)
+    if location.size == 0:
+        key = True
+        print("***/执行opencv检测外框+yolox检测pin/***")
+    else:
+        key = False
+        print("***/执行yolox检测外框+yolox检测pin/***")
+        print("location", location)
+        # 从img中按照location截图
+        # 将列表location里面的元素全化为整数
+        location = [int(location[0][0]), int(location[0][1]), int(location[0][2]), int(location[0][3])]
+        print("location", location)
+        if not os.path.exists(path):
+            print(f"源文件不存在, 无法裁剪: {path}")
+        crop_img_save(path, f'{DATA_BOTTOM_CROP}/pinmap.jpg', location[0], location[1], location[2], location[3])
+        # # 用yolox检测pin，按照pin的四个坐标的极限位置裁剪下pinmap
+        # img_path1 = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
+        # pin = onnx_output_pairs_data_pin_5(img_path1)
+        #
+        # # pin中找x_min和y_min和x_max和y_max
+        #
+        # x_min = 9999
+        # y_min = 9999
+        # x_max = 0
+        # y_max = 0
+        # for i in range(len(pin)):
+        #     if pin[i][0] < x_min:
+        #         x_min = pin[i][0]
+        #     if pin[i][1] < y_min:
+        #         y_min = pin[i][1]
+        #     if pin[i][2] > x_max:
+        #         x_max = pin[i][2]
+        #     if pin[i][3] > y_max:
+        #         y_max = pin[i][3]
+        # # 判断x_min和y_min和x_max和y_max所占的面积是否占比超过0.4
+        # img = cv2.imread(f'{DATA_BOTTOM_CROP}/pinmap.jpg')
+        # if (x_max - x_min) * (y_max - y_min) / img.shape[0] * img.shape[1] > 0.4:
+        #     crop_img_save(f'{DATA_BOTTOM_CROP}/pinmap.jpg', f'{DATA_BOTTOM_CROP}/pinmap.jpg', max(int(x_min) - 1, 0),
+        #                   max(int(y_min) - 1, 0), min(int(x_max) + 1, img.shape[1]),
+        #                   min(int(y_max) + 1, img.shape[0]))
+        #     print("经过yolox辅助得到pinmap")
+
+    return key
+def average_width_of_positive_intervals(a):
+    intervals = []
+    start = -1
+
+    for i in range(len(a)):
+        if a[i] > 0 and start == -1:
+            start = i
+        elif a[i] == 0 and start != -1:
+            intervals.append(i - start)
+            start = -1
+
+    # 如果最后一个区间是以大于0的数结束的，需要额外处理
+    if start != -1:
+        intervals.append(len(a) - start)
+    # print("intervals", intervals)
+    if not intervals:
+        return 0
+
+    return sum(intervals) / len(intervals)
+
+def find_start_p(a, ave_width, p):
+    for i in range(len(a) - 1):
+        if a[i] == 0 and a[i + 1] > 0:
+            start_p = i + 1
+            width = len(a) - 1 - i
+            for j in range(i + 1, len(a)):
+
+                if a[j] == 0:
+                    width = j-i - 1
+                    break
+            if width < ave_width * p:
+                i = j
+                start_p = j
+            else:
+                break
+    return start_p
+def crop_pin_map_x(a,w, h,  test_mode):
+    '''
+    根据宽度判断最外围是否为PIN，并裁剪图片使最外部PIN紧贴图片边缘
+    :param a:
+    :return:
+    '''
+
+    start_p  = 0
+    end_p = len(a) - 1
+    p = 0.5
+    ave_width = average_width_of_positive_intervals(a)
+    if test_mode:
+        print("ave_width", ave_width)
+    # 抹平a中宽度小于平均宽度*p的区间和大于平均宽度/p的区间的宽度
+    for i in range(1, len(a)):
+        if a[i] > 0 and a[i - 1] == 0:
+            a_start = i
+            for j in range(i + 1, len(a)):
+                if a[j] == 0:
+                    a_end = j
+                    break
+            if abs(a_end - a_start) < ave_width * p or abs(a_end - a_start) > ave_width / p:
+                for k in range(a_start, a_end):
+                    a[k] = 0
+    # 最左侧区间宽度小于平均宽度*p，则起始点下一个区间起点
+    start_p = find_start_p(a, ave_width, p)
+    a_reversed = a[::-1]
+    end_p = find_start_p(a_reversed, ave_width, p)
+    end_p = len(a) - end_p - 1
+    # 根据开始和结束点裁剪图片和a
+    crop_img_save(f'{DATA_BOTTOM_CROP}/pinmap.jpg', f'{DATA_BOTTOM_CROP}/pinmap.jpg', max(start_p - 1, 0), 0, min(end_p + 2, w - 1), h - 1)
+
+    a = a[max(start_p - 1, 0):min(end_p + 2, w - 1)]
+    if test_mode:
+        print("a", a)
+        print("len(a)", len(a))
+    return a, ave_width
+
+def crop_pin_map_y(a,w,h, test_mode):
+    '''
+    根据宽度判断最外围是否为PIN，并裁剪图片使最外部PIN紧贴图片边缘
+    :param a:
+    :return:
+    '''
+
+    start_p  = 0
+    end_p = len(a) - 1
+    p = 0.5
+    ave_width = average_width_of_positive_intervals(a)
+    # 抹平a中宽度小于平均宽度*p的区间
+    for i in range(1, len(a)):
+        if a[i] > 0 and a[i - 1] == 0:
+            a_start = i
+            for j in range(i + 1, len(a)):
+                if a[j] == 0:
+                    a_end = j
+                    break
+            if abs(a_end - a_start) < ave_width * p:
+                for k in range(a_start, a_end):
+                    a[k] = 0
+    # 最左侧区间宽度小于平均宽度*p，则起始点下一个区间起点
+    start_p = find_start_p(a, ave_width, p)
+    a_reversed = a[::-1]
+    end_p = find_start_p(a_reversed, ave_width, p)
+    end_p = len(a) - end_p - 1
+    # 根据开始和结束点裁剪图片和a
+    crop_img_save(f'{DATA_BOTTOM_CROP}/pinmap.jpg', f'{DATA_BOTTOM_CROP}/pinmap.jpg', 0, max(0,start_p -1), w - 1, min(end_p + 2, h - 1))
+
+    a = a[max(start_p - 1,0):min(end_p+2, h - 1)]
+    if test_mode:
+        print("b", a)
+    return a, ave_width
+
+def get_pin_status_geometry(pin_map, test_mode=False):
+    """
+    【几何法核心】基于 Blob 分析的 Pin 检测
+    不比对相似度，直接检测网格内是否存在符合 BGA 焊球几何特征的连通域。
+    特征包括：面积占比、长宽比(圆度)、居中度。
+    """
+    path = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
+    img = cv2.imread(path)
+
+    if img is None:
+        print(f"Error: 无法读取 {path}")
+        return np.zeros(pin_map.shape[:2]), np.zeros(pin_map.shape[:2])
+
+    # 转灰度
+    if len(img.shape) == 3:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = img
+
+    rows, cols = pin_map.shape[:2]
+
+    # 初始化结果矩阵
+    pin_result_map = np.zeros((rows, cols))
+    color_result_map = np.zeros((rows, cols))
+
+    # ================= 核心阈值参数 (可根据实际情况微调) =================
+    # 1. 面积阈值：连通域面积占网格总面积的比例 (排除噪点和背景)
+    MIN_AREA_RATIO = 0.08  # 至少占 8%
+    MAX_AREA_RATIO = 0.99  # 不能占满 90% (占满通常是背景)
+
+    # 2. 长宽比 (Aspect Ratio): w/h
+    # 圆形或圆角矩形的长宽比接近 1.0。太长或太扁通常是丝印线条。
+    MIN_ASPECT_RATIO = 0.5
+    MAX_ASPECT_RATIO = 2.0
+
+    # 3. 填充度 (Solidity): 轮廓面积 / 外接矩形面积
+    # 圆形的填充度约为 pi/4 ≈ 0.785，正方形为 1.0。
+    # 复杂的噪点或细线条通常填充度很低。
+    MIN_SOLIDITY = 0.4
+
+    # 4. 居中度：轮廓中心必须在网格的中心区域
+    # 允许偏离中心的幅度 (0.3 表示允许偏离 30% 的宽高)
+    CENTER_TOLERANCE = 0.5
+    # ===================================================================
+
+    for i in range(rows):
+        for j in range(cols):
+            # 【重要】使用 [:4] 防止解包错误
+            try:
+                coords = pin_map[i][j][:4]
+                x1, y1, x2, y2 = map(int, coords)
+            except:
+                continue  # 数据异常跳过
+
+            # 越界保护
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(img.shape[1], x2), min(img.shape[0], y2)
+
+            # 1. 裁剪单个网格
+            cell = gray[y1:y2, x1:x2]
+            cell_h, cell_w = cell.shape
+            cell_area = cell_h * cell_w
+
+            if cell_area < 10:  # 忽略极小网格
+                continue
+
+            # 2. 局部自适应二值化 (Otsu)
+            # 这能解决全图光照不均问题，每个格子自己决定黑白阈值
+            try:
+                thresh_val, binary = cv2.threshold(cell, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            except:
+                continue
+
+            # 3. 极性校正 (Polarity Check)
+            # 假设 Pin 是“少数派”。如果二值化后白色像素超过 60%，说明背景被识别为白色了
+            # 此时反转图像，确保 Pin 是白色的前景
+            white_ratio = cv2.countNonZero(binary) / cell_area
+            if white_ratio > 0.6:
+                binary = cv2.bitwise_not(binary)
+
+            # 4. 轮廓提取
+            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            is_pin = False
+
+            # 5. 遍历轮廓进行几何筛选
+            for cnt in contours:
+                # --- 特征 A: 面积 ---
+                area = cv2.contourArea(cnt)
+                if area < cell_area * MIN_AREA_RATIO or area > cell_area * MAX_AREA_RATIO:
+                    continue
+
+                # --- 特征 B: 外接矩形与长宽比 ---
+                x, y, w, h = cv2.boundingRect(cnt)
+                aspect_ratio = float(w) / h
+                if aspect_ratio < MIN_ASPECT_RATIO or aspect_ratio > MAX_ASPECT_RATIO:
+                    continue
+
+                # --- 特征 C: 填充度 (可选，增强稳定性) ---
+                solidity = area / float(w * h)
+                if solidity < MIN_SOLIDITY:
+                    continue
+
+                # --- 特征 D: 居中度 (关键) ---
+                # Pin 肯定在网格中间，而在边缘的通常是相邻格子的干扰或丝印
+                cnt_cx = x + w / 2
+                cnt_cy = y + h / 2
+                cell_cx = cell_w / 2
+                cell_cy = cell_h / 2
+
+                # 计算偏离距离
+                diff_x = abs(cnt_cx - cell_cx)
+                diff_y = abs(cnt_cy - cell_cy)
+
+                if diff_x > cell_w * CENTER_TOLERANCE or diff_y > cell_h * CENTER_TOLERANCE:
+                    continue
+
+                # 如果所有条件都满足，认定为 Pin
+                is_pin = True
+                break
+
+                # 6. 记录结果
+            if is_pin:
+                pin_result_map[i][j] = 1
+                color_result_map[i][j] = 2  # 2 代表普通 Pin
+            else:
+                pin_result_map[i][j] = 0
+                color_result_map[i][j] = 0  # 0 代表背景
+
+    if test_mode:
+        count = np.sum(pin_result_map)
+        print(f"几何法检测完成，共发现 {int(count)} 个 Pin")
+
+    return pin_result_map, color_result_map
+
+def find_pin_core():
+    test_mode = False
+    path = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
+
+    # 读取图片并二值化（用于垂直投影）
+    image1 = cv2.imread(path)
+    if image1 is None:
+        print("找不到图片:", path)
+        return np.array([])
+    gray = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+    h, w = binary.shape[:2]
+
+    # 垂直投影 a（每列黑点计数）
+    vproject = binary.copy()
+    a = [0 for _ in range(w)]
+    for j in range(w):
+        for i in range(h):
+            if vproject[i, j] == 0:
+                a[j] += 1
+                vproject[i, j] = 255
+
+    # 垂直投影可视化处理（保留第一个黑点位置）
+    vproject_copy = vproject.copy()
+    for j in range(w):
+        if a[j] > 0:
+            for i in range(h):
+                if vproject_copy[i, j] == 255:
+                    vproject_copy[i, j] = 0
+                    break
+
+    # 滤波 a
+    a = filter_a_b(a)
+    for j in range(w):
+        if a[j] > 0:
+            for i in range(h):
+                if vproject[i, j] == 255:
+                    vproject[i, j] = 0
+                    break
+
+    # 显示垂直投影（调试）
+    # cv2.namedWindow('vproject', cv2.WINDOW_NORMAL)
+    # cv2.imshow("vproject", vproject)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
+    # 不裁剪 X 方向：直接使用平均宽度作为 ave_width，保持 a 不变
+    a_ave_width = average_width_of_positive_intervals(a)
+    if test_mode:
+        print("垂直投影平均宽度（未裁剪）:", a_ave_width)
+
+    # 找网格（传入未裁剪的 a 与平均宽度）
+    c, c_original = find_line(a, a_ave_width, test_mode)
+    print(f"\n垂直方向网格线统计:")
+    print(f"  补全前原始网格线数量: {len(c_original)} 条")
+    c_lines_count = sum(1 for x in c if x > 0)
+    print(f"  补全后网格线数量: {c_lines_count} 条")
+    a = [i + j for i, j in zip(a, c)]
+
+    # -- 水平投影 b（同样不裁剪 Y 方向） --
+    image1 = cv2.imread(path)
+    gray = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+    h, w = binary.shape[:2]
+
+    hproject = np.ones((h, w), dtype=np.uint8) * 255
+    b = [0 for _ in range(h)]
+    for j in range(h):
+        for i in range(w):
+            if binary[j, i] == 0:
+                b[j] += 1
+                hproject[j, i] = 0
+
+    # 滤波 b 并可视化第一个黑点位置
+    b = filter_a_b(b)
+    hproject_filtered = np.ones((h, w), dtype=np.uint8) * 255
+    for j in range(h):
+        if b[j] > 0:
+            for i in range(w):
+                if hproject[j, i] == 255:
+                    hproject_filtered[j, i] = 0
+                    break
+
+    # cv2.namedWindow('hproject_filtered', cv2.WINDOW_NORMAL)
+    # cv2.imshow("hproject_filtered", hproject_filtered)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
+    # 不裁剪 Y 方向：直接计算平均宽度，保持 b 不变
+    b_ave_width = average_width_of_positive_intervals(b)
+    if test_mode:
+        print("水平投影平均宽度（未裁剪）:", b_ave_width)
+
+    d, d_original = find_line(b, b_ave_width, test_mode)
+    print(f"\n水平方向网格线统计:")
+    print(f"  补全前原始网格线数量: {len(d_original)} 条")
+    d_lines_count = sum(1 for x in d if x > 0)
+    print(f"  补全后网格线数量: {d_lines_count} 条")
+    b = [i + j for i, j in zip(b, d)]
+
+    # 统计网格线数用于生成 pin_map
+    c_lines_count = sum(1 for x in c if x > 0)
+    d_lines_count = sum(1 for x in d if x > 0)
+    print(f"\n网格线统计（用于生成pin_map）:")
+    print(f"  垂直方向网格线数量: {c_lines_count} 条")
+    print(f"  水平方向网格线数量: {d_lines_count} 条")
+    print(f"  预期网格大小: {d_lines_count-1}行 × {c_lines_count-1}列")
+
+    # 生成 pin_map 并后续处理（保持原流程）
+    pin_map = get_pin_grid(a, b, c, d, test_mode)
+    print(f"  实际生成的pin_map大小: {pin_map.shape[0]}行 × {pin_map.shape[1]}列")
+
+    # show_pin_grid(pin_map, c, d)
+    pin_map_wangge = pin_map.copy()
+
+    pin_map = cal_grid_shang(pin_map, test_mode)
+    pin_map, color_map = compare_pin(pin_map, pin_map_wangge, test_mode)
+
+
+
+    # pin_map, color_map = get_pin_status_geometry(pin_map, test_mode=True)
+    print_engineering(pin_map)
+
+    pin_map, color_map = cut_pinmap(pin_map, color_map, test_mode)
+    pin_map, color_map = judge_singular_point(pin_map, color_map, test_mode)
+
+    output = np.vstack((pin_map, color_map))
+    return output
+
+
+def print_engineering(matrix):
+    cols = len(matrix[0])
+
+    print("\n--- BGA Engineering View (Wider Horizontal) ---")
+
+    # === 1. 打印列号 (关键：凑够3个字符宽度) ===
+    print("    ", end="")  # 左边留白给行号 "XX |"
+    for i in range(1, cols+1):
+        if i < 10:
+            # 单个数字前后加空格，凑3位居中： " 0 ", " 1 "
+            print(f" {i} ", end="")
+        else:
+            # 两位数字后加一个空格，凑3位： "10 ", "11 "
+            print(f"{i} ", end="")
+
+    # 分割线也要变宽，每个列对应3个横杠
+    print("\n    " + "---" * cols)
+
+    # === 2. 打印每一行 ===
+    for r_idx, row in enumerate(matrix):
+        # 打印行号
+        print(f"{r_idx+1:2d} |", end="")
+
+        # 打印数据 (关键：每个单元格占3个字符宽度)
+        for val in row:
+            if val == 1:
+                # 实心圆 + 2个空格，拉宽间距
+                print("●  ", end="")
+            else:
+                # 3个空格占位
+                print("   ", end="")
+
+                # 换行 (只需要一个正常换行)
+        print()
+
+def compare_pin(pin_map, pin_map_wangge, test_mode):
+    '''
+    将信息熵高的网格内容提取，计算两两之间的图片相似度，选取最多相似的网格类型作为模板，筛选所有信息熵高的网格，删除掉相似度低于阈值的网格
+    '''
+    # 0 = 空 1 = 非空但和模板不相似 2 = 和模板相似 3 = 奇异点
+    color_array = np.zeros_like(pin_map)
+    path = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
+    img = cv2.imread(path)
+    # (1)信息熵最大与最小的差值*0.2+最小值作为界限筛选出信息熵
+    try:
+        min_entropy = np.min(pin_map)
+        max_entropy = np.max(pin_map)
+        # threshold = (max_entropy - min_entropy) * 0.2 + min_entropy
+        threshold = 0.5
+    except:
+        print("pin_map为空")
+        threshold = 0
+    # (2)将这些信息熵的网格图片内容保存在数组中
+
+    # (3)对比图片相似度
+
+    row, col = pin_map.shape
+    pin_compare_1 = np.empty((row, col, row * col))
+    pin_compare_2 = np.empty((row, col))
+    pin_compare = np.zeros((row, col))
+    pin_map_compare = np.zeros((row, col))
+    for i in range(int(row * 0.25)):
+        for j in range(int(col * 0.25)):
+            if pin_map[i][j] > threshold:
+                color_array[i][j] = 1
+                for k in range(int(row * 0.25)):
+                    for l in range(int(col * 0.25)):
+                        if pin_map[k][l] > threshold:
+                            img1 = img[int(pin_map_wangge[i][j][1]): int(pin_map_wangge[i][j][3]),
+                                   int(pin_map_wangge[i][j][0]): int(pin_map_wangge[i][j][2])]
+                            img2 = img[int(pin_map_wangge[k][l][1]): int(pin_map_wangge[k][l][3]),
+                                   int(pin_map_wangge[k][l][0]): int(pin_map_wangge[k][l][2])]
+
+                            # hash1 = dHash(img1)
+                            # hash2 = dHash(img2)
+                            # n = cmpHash(hash1, hash2)
+                            n = classify_hist_with_split(img1, img2)
+
+                            pin_compare_1[i][j][k * col + l] = n
+                            pin_compare[i][j] += n
+                            if test_mode:
+                                print(i, j, "与", k, l, "得到", n)
+    if test_mode:
+        print(pin_compare)
+    # 找到pin_compare中不为0的最大值，取其行数和列数,将其作为存在PIN的比较的模板
+    max_value = pin_compare[0][0]
+    max_row = 0
+    max_col = 0
+
+    for i in range(len(pin_compare)):
+        for j in range(len(pin_compare[i])):
+            if pin_compare[i][j] > max_value:
+                max_value = pin_compare[i][j]
+                max_row = i
+                max_col = j
+
+    img1 = img[int(pin_map_wangge[max_row][max_col][1]): int(pin_map_wangge[max_row][max_col][3]),
+           int(pin_map_wangge[max_row][max_col][0]): int(pin_map_wangge[max_row][max_col][2])]
+    # 逐个比较是否和模板相似
+    for i in range(row):
+        for j in range(col):
+            if pin_map[i][j] < threshold:
+                pin_map_compare[i][j] = 0
+                pin_compare_2[i][j] = 0
+            else:
+
+                img2 = img[int(pin_map_wangge[i][j][1]): int(pin_map_wangge[i][j][3]),
+                       int(pin_map_wangge[i][j][0]): int(pin_map_wangge[i][j][2])]
+
+                # hash1 = dHash(img1)
+                # hash2 = dHash(img2)
+                # n = cmpHash(hash1, hash2)
+                n = classify_hist_with_split(img1, img2)
+
+                pin_compare_2[i][j] = n
+                # if n > 0.7:
+                if n > 0.4:
+                    pin_map_compare[i][j] = 1
+                    color_array[i][j] = 2
+                else:
+                    pin_map_compare[i][j] = 0
+    if test_mode:
+        print(pin_map_compare)
+        print(pin_compare_2)
+    return pin_map_compare, color_array
+
+# 通过得到RGB每个通道的直方图来计算相似度
+def classify_hist_with_split(image1, image2, size=(256, 256)):
+    # 将图像resize后，分离为RGB三个通道，再计算每个通道的相似值
+    image1 = cv2.resize(image1, size)
+    image2 = cv2.resize(image2, size)
+    sub_image1 = cv2.split(image1)
+    sub_image2 = cv2.split(image2)
+    sub_data = 0
+    for im1, im2 in zip(sub_image1, sub_image2):
+        sub_data += calculate(im1, im2)
+    sub_data = sub_data / 3
+    return sub_data
+
+# 计算单通道的直方图的相似值
+def calculate(image1, image2):
+    hist1 = cv2.calcHist([image1], [0], None, [256], [0.0, 255.0])
+    hist2 = cv2.calcHist([image2], [0], None, [256], [0.0, 255.0])
+    # 计算直方图的重合度
+    degree = 0
+    for i in range(len(hist1)):
+        if hist1[i] != hist2[i]:
+            degree = degree + (1 - abs(hist1[i] - hist2[i]) / max(hist1[i], hist2[i]))
+        else:
+            degree = degree + 1
+    degree = degree / len(hist1)
+    return degree
+
+def find_pin(bottom_border):
+    # 重置行列数
+    pin_num_x_y = np.array([0, 0])
+    pin_num_x_y = pin_num_x_y.astype(int)
+    path = f'{YOLOX_DATA}\pin_num.txt'
+    np.savetxt(path, pin_num_x_y)
+
+    empty_folder(result_path('Package_extract', 'bga'))
+    os.makedirs(result_path('Package_extract', 'bga'))
+    empty_folder(BGA_BOTTOM)
+    os.makedirs(BGA_BOTTOM)
+    # # bga_bottom中如果存在两张图片，yolox检测，保留pin数量多的存为pinmap.jpg
+    # print("border:", bottom_border)
+    # key = yolox_find_waikuang(bottom_border)
+    # if key:
+    #     get_waikaung()
+    #     find_right_img()
+    get_pinmap()
+    output_list = find_pin_core()
+    return output_list
+
+#1029
+# 异步执行 pinmap 识别并缓存结果。
+def time_save_find_pinmap(bottom_border):
+    """异步执行 pinmap 识别并缓存结果。"""
+    result_queue = queue.Queue()
+    thread = threading.Thread(target=long_running_task, args=(result_queue, bottom_border))
+    thread.start()
+
+    thread.join(timeout=10)  # 设置超时时间为5秒
+    if thread.is_alive():
+        print("读取pinmap进程花费时间过长，跳过")
+        pin_map = np.ones((10, 10))
+        color = np.full_like(pin_map, fill_value=2)
+        # 记录pin的行列数
+        pin_num_x_y = np.array([0, 0])
+        pin_num_x_y = pin_num_x_y.astype(int)
+        path = f'{YOLOX_DATA}\pin_num.txt'
+        np.savetxt(path, pin_num_x_y)
+    else:
+        try:
+            output_list = result_queue.get_nowait()  # 尝试获取结果
+            half_index = output_list.shape[0] // 2  # 取行数的一半作为分割点
+
+            pin_map = output_list[:half_index, :]  # 上半部分
+            color = output_list[half_index:, :]  # 下半部分
+
+            # print("Result:", pin_map)
+            # print("Result:", color)
+            # print("Result:", pin_map)
+        except queue.Empty:
+            print("Queue is empty, no result available.")
+            pin_map = np.ones((10, 10))
+            color = np.full_like(pin_map, fill_value=2)
+            # 记录pin的行列数
+            pin_num_x_y = np.array([0, 0])
+            pin_num_x_y = pin_num_x_y.astype(int)
+            path = f'{YOLOX_DATA}\pin_num.txt'
+            np.savetxt(path, pin_num_x_y)
+    # 记录pin的行列数
+    pin_num_x_y = np.array([pin_map.shape[1], pin_map.shape[0]])
+    pin_num_x_y = pin_num_x_y.astype(int)
+    path = f'{YOLOX_DATA}\pin_num.txt'
+    np.savetxt(path, pin_num_x_y)
+
+    return pin_map, color
+# 结合序号与字母框定位底部的引脚索引。
+def find_serial_number_letter(serial_numbers, serial_letters, bottom_dbnet_data):
+    # serial_numbers:np(,4)[x1,y1,x2,y2]
+    # serial_letters:np(,4)[x1,y1,x2,y2]
+    # bottom_dbnet_data:np(,4)[x1,y1,x2,y2]
+    #
+    # 将serial提取出唯一值
+    if len(serial_numbers) >= 1:
+        maxlength = 0
+        max_no = -1
+        for i in range(len(serial_numbers)):
+            if maxlength < max(serial_numbers[i][2] - serial_numbers[i][0],
+                               serial_numbers[i][3] - serial_numbers[i][1]):
+                maxlength = max(serial_numbers[i][2] - serial_numbers[i][0],
+                                serial_numbers[i][3] - serial_numbers[i][1])
+                max_no = i
+        only_serial_numbers = serial_numbers[max_no]
+        # print("only_serial_numbers", only_serial_numbers)
+    if len(serial_letters) >= 1:
+        maxlength = 0
+        max_no = -1
+        for i in range(len(serial_letters)):
+            if maxlength < max(serial_letters[i][2] - serial_letters[i][0],
+                               serial_letters[i][3] - serial_letters[i][1]):
+                maxlength = max(serial_letters[i][2] - serial_letters[i][0],
+                                serial_letters[i][3] - serial_letters[i][1])
+                max_no = i
+        only_serial_letters = serial_letters[max_no]
+        # print("only_serial_letters", only_serial_letters)
+    # 提取serial中的数字和字母
+    ratio = 0.2
+    serial_numbers_data = np.zeros((0, 4))
+    serial_letters_data = np.zeros((0, 4))
+    bottom_dbnet_data_account = np.zeros((len(bottom_dbnet_data)))  # 1 = 是serial的文本，需要剔除
+    new_bottom_dbnet_data = np.zeros((0, 4))
+    if len(serial_numbers) != 0:
+        for i in range(len(bottom_dbnet_data)):
+            if not (bottom_dbnet_data[i][0] > only_serial_numbers[2] or bottom_dbnet_data[i][2] < only_serial_numbers[
+                0]):  # 两矩形在x坐标上的长有重叠
+                if not (bottom_dbnet_data[i][1] > only_serial_numbers[3] or bottom_dbnet_data[i][3] <
+                        only_serial_numbers[
+                            1]):  # 两矩形在y坐标上的高有重叠
+                    # print('********')
+                    l = abs(bottom_dbnet_data[i][2] - bottom_dbnet_data[i][0]) + abs(only_serial_numbers[2] - \
+                                                                                     only_serial_numbers[0]) - (
+                                max(only_serial_numbers[2], bottom_dbnet_data[i][2]) - min(only_serial_numbers[0],
+                                                                                           bottom_dbnet_data[i][0]))
+
+                    w = bottom_dbnet_data[i][3] - bottom_dbnet_data[i][1] + only_serial_numbers[3] - \
+                        only_serial_numbers[1] - (
+                                max(only_serial_numbers[3], bottom_dbnet_data[i][3]) - min(only_serial_numbers[1],
+                                                                                           bottom_dbnet_data[i][1]))
+                    if l * w / (bottom_dbnet_data[i][2] - bottom_dbnet_data[i][0]) * (
+                            bottom_dbnet_data[i][3] - bottom_dbnet_data[i][1]) > ratio or l * w / (
+                            only_serial_numbers[2] - only_serial_numbers[0]) * (
+                            only_serial_numbers[3] - only_serial_numbers[1]) > ratio:
+                        serial_numbers_data = np.r_[serial_numbers_data, [bottom_dbnet_data[i]]]
+                        bottom_dbnet_data_account[i] = 1
+    if len(serial_letters) != 0:
+        for i in range(len(bottom_dbnet_data)):
+            if not (bottom_dbnet_data[i][0] > only_serial_letters[2] or bottom_dbnet_data[i][2] < only_serial_letters[
+                0]):  # 两矩形在x坐标上的长有重叠
+                if not (bottom_dbnet_data[i][1] > only_serial_letters[3] or bottom_dbnet_data[i][3] <
+                        only_serial_letters[
+                            1]):  # 两矩形在y坐标上的高有重叠
+                    l = abs(bottom_dbnet_data[i][2] - bottom_dbnet_data[i][0]) + abs(only_serial_letters[2] - \
+                                                                                     only_serial_letters[0]) - (
+                                max(only_serial_letters[2], bottom_dbnet_data[i][2]) - min(only_serial_letters[0],
+                                                                                           bottom_dbnet_data[i][0]))
+
+                    w = bottom_dbnet_data[i][3] - bottom_dbnet_data[i][1] + only_serial_letters[3] - \
+                        only_serial_letters[1] - (
+                                max(only_serial_letters[3], bottom_dbnet_data[i][3]) - min(only_serial_letters[1],
+                                                                                           bottom_dbnet_data[i][1]))
+                    if l * w / (bottom_dbnet_data[i][2] - bottom_dbnet_data[i][0]) * (
+                            bottom_dbnet_data[i][3] - bottom_dbnet_data[i][1]) > ratio or l * w / (
+                            only_serial_letters[2] - only_serial_letters[0]) * (
+                            only_serial_letters[3] - only_serial_letters[1]) > ratio:
+                        serial_letters_data = np.r_[serial_letters_data, [bottom_dbnet_data[i]]]
+                        bottom_dbnet_data_account[i] = 1
+    for i in range(len(bottom_dbnet_data_account)):
+        if bottom_dbnet_data_account[i] == 0:
+            new_bottom_dbnet_data = np.r_[new_bottom_dbnet_data, [bottom_dbnet_data[i]]]
+    return serial_numbers_data, serial_letters_data, new_bottom_dbnet_data
+# 统一调度 OCR 推理并合并多模型输出。
+def ocr_data(img_path, dbnet_data):
+    # ocr_get_data(img_path,top_yolox_num)
+    dbnet_data = ocr_get_data_onnx(img_path, dbnet_data)
+    return dbnet_data
+# 调用 ONNX OCR 模型识别并返回结构化数据。
+def ocr_get_data_onnx(image_path,
+
+                      yolox_pairs):  # 输入yolox输出的pairs坐标和匹配的data坐标以及图片地址，ocr识别文本后输出data内容按序保存在data_list_np（numpy二维数组）
+    ocr_data = []  # 按序存储pairs的data
+    dt_boxes = []
+    # 裁剪识别区域的时候需要扩展一圈，以防yolox极限检测框导致某些数据边缘没有被检测
+    for i in range(len(yolox_pairs)):
+        KuoZhan_x = 0
+        KuoZhan_y = 0
+        dt_boxes_middle = np.array([[yolox_pairs[i][0] - KuoZhan_x, yolox_pairs[i][1] - KuoZhan_y],
+                                    [yolox_pairs[i][2] + KuoZhan_x, yolox_pairs[i][1] - KuoZhan_y],
+                                    [yolox_pairs[i][2] + KuoZhan_x, yolox_pairs[i][3] + KuoZhan_y],
+                                    [yolox_pairs[i][0] - KuoZhan_x, yolox_pairs[i][3] + KuoZhan_y]], dtype=np.float32)
+        dt_boxes.append(dt_boxes_middle)
+    ocr_data = Run_onnx(image_path, dt_boxes)
+    return ocr_data
+# 清理底部 OCR 文本，保留有效的序号与尺寸。
+def filter_bottom_ocr_data(bottom_ocr_data, bottom_dbnet_data_serial, serial_numbers, serial_letters, bottom_dbnet_data):
+    #
+    # 输出serial_numbers_data:np.(,4)['x1','y1','x2','y2','str']
+    # serial_numbers:np(,4)[x1,y1,x2,y2]
+    #
+    serial_numbers_data = np.zeros((0, 5))
+    serial_letters_data = np.zeros((0, 5))
+    bottom_ocr_new_data = []
+    for i in range(len(bottom_dbnet_data_serial)):
+        for j in range(len(serial_numbers)):
+            if (bottom_dbnet_data_serial[i] == serial_numbers[j]).all():
+                mid_str = np.empty(5, dtype=np.dtype('U10'))
+                mid_str[0: 4] = serial_numbers[j].astype(str)
+                mid_str[4] = bottom_ocr_data[i]
+                serial_numbers_data = np.r_[serial_numbers_data, [mid_str]]
+                break
+        for k in range(len(serial_letters)):
+            if (bottom_dbnet_data_serial[i] == serial_letters[k]).all():
+                mid_str = np.empty(5, dtype=np.dtype('U10'))
+                mid_str[0: 4] = serial_letters[k].astype(str)
+                mid_str[4] = bottom_ocr_data[i]
+                serial_letters_data = np.r_[serial_letters_data, [mid_str]]
+                break
+        for l in range(len(bottom_dbnet_data)):
+            if (bottom_dbnet_data_serial[i] == bottom_dbnet_data[l]).all():
+                bottom_ocr_new_data.append(bottom_ocr_data[i])
+                break
+    return serial_numbers_data, serial_letters_data, bottom_ocr_new_data
+# 综合序号信息确定行列数及 Pin1 位置。
+def find_pin_num_pin_1(serial_numbers_data, serial_letters_data, serial_numbers, serial_letters):
+    # serial_numbers_data:np.(,4)['x1','y1','x2','y2','str']
+    # serial_letters_data:np.(,4)['x1','y1','x2','y2','str']
+    # serial_numbers:np.(,4)[x1,y1,x2,y2)
+    # serial_letters:np.(,4)[x1,y1,x2,y2)
+    #
+    # 默认输出
+    pin_num_x_serial = 0
+    pin_num_y_serial = 0
+    pin_num_serial_number = 0
+    pin_num_serial_letter = 0
+    pin_1_location = np.array([-1, -1])
+    # pin_1_location = [X, Y],X = 0:横向用数字标记序号，纵向用字母标记序号；X= 1，横向用字母标记序号，纵向用数字标记序号
+    # pin_1_location = [X, Y],Y = 0 = 左上角,1= 右上角，2 = 右下角，3 = 左下角
+    if len(serial_numbers_data) > 0 or len(serial_numbers_data) > 0:
+
+        # ocr识别serial_number,serial_letter
+        # img_path = 'data/bottom.jpg'
+        # serial_numbers_data = ocr_en_cn_onnx(img_path, serial_numbers_data)
+        # print('serial_numbers_data', serial_numbers_data)
+        # serial_letters_data = ocr_en_cn_onnx(img_path, serial_letters_data)
+        # print('serial_letters_data', serial_letters_data)
+        # 根据经验修改ocr识别的错误
+        serial_letters_data = correct_serial_letters_data(serial_letters_data)
+        print('修正之后的serial_letters_data', serial_letters_data)
+        # 根据serial_number最大值找行列数
+        serial_number = np.zeros((0))
+        new_serial_numbers_data = np.array([['0', '0', '0', '0', '0']])
+        for i in range(len(serial_numbers_data)):
+            try:
+                serial_number = np.append(serial_number, int(serial_numbers_data[i][4]))
+                new_serial_numbers_data = np.r_[new_serial_numbers_data, [serial_numbers_data[i]]]
+            except:
+                print("在用数字标识的pin行列序号中ocr识别到非数字信息，删除")
+
+        serial_numbers_data = new_serial_numbers_data
+        print('修正之后的serial_numbers_data', serial_numbers_data)
+        serial_number = -(np.sort(-serial_number))  # 从大到小排列
+        pin_num_serial_number = 0
+        for i in range(len(serial_number)):
+            if len(serial_number) > 1 and i + 1 < len(serial_number):
+                if serial_number[i] - serial_number[i + 1] < 3:
+                    pin_num_serial_number = serial_number[i]
+                    break
+
+        # 根据serial_letter最大值找行列数
+        letter_list = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P', 'R', 'T', 'U', 'V', 'W',
+                       'Y']
+        letter_list_a = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'j', 'k', 'l', 'm', 'n', 'p', 'r', 't', 'u', 'v', 'w',
+                         'y']
+        serial_letter = np.zeros((0))
+        # 将字母序列转为数字序列
+        for i in range(len(serial_letters_data)):
+            letter_number = 0
+            no = 0
+            letters = serial_letters_data[i][4]
+            letters = letters[::-1]  # 倒序
+            for every_letter in letters:
+                no += 1
+                for j in range(len(letter_list)):
+                    if letter_list[j] == every_letter or letter_list_a[j] == every_letter:
+                        letter_number += 20 ** (no - 1) * (j + 1)
+            serial_letter = np.append(serial_letter, letter_number)
+            serial_letters_data[i][4] = str(letter_number)
+        print("serial_letters_data", serial_letters_data)
+        serial_letter = -(np.sort(-serial_letter))  # 从大到小排列
+        pin_num_serial_letter = 0
+        for i in range(len(serial_letter)):
+            if len(serial_letter) > 1 and i + 1 < len(serial_letter):
+                if serial_letter[i] - serial_letter[i + 1] < 3:
+                    pin_num_serial_letter = serial_letter[i]
+                    break
+        print('pin_num_serial_number, pin_num_serial_letter', pin_num_serial_number, pin_num_serial_letter)
+    if pin_num_serial_number != 0:
+        if len(serial_numbers) > 0:
+            if abs(serial_numbers[0][0] - serial_numbers[0][2]) > abs(serial_numbers[0][1] - serial_numbers[0][3]):
+                pin_num_x_serial = pin_num_serial_number
+            else:
+                pin_num_y_serial = pin_num_serial_number
+    if pin_num_serial_letter != 0:
+        if len(serial_letters) > 0:
+            if abs(serial_letters[0][0] - serial_letters[0][2]) > abs(serial_letters[0][1] - serial_letters[0][3]):
+                pin_num_x_serial = pin_num_serial_letter
+            else:
+                pin_num_y_serial = pin_num_serial_letter
+    print("pin_num_x_serial, pin_num_y_serial", pin_num_x_serial, pin_num_y_serial)
+    # pin_1_location = [X, Y],X = 0:横向用数字标记序号，纵向用字母标记序号；X= 1，横向用字母标记序号，纵向用数字标记序号
+    # pin_1_location = [X, Y],Y = 0 = 左上角,1= 右上角，2 = 右下角，3 = 左下角
+    # pin1定位
+    if len(serial_numbers_data) > 0 or len(serial_numbers_data) > 0:
+        if len(serial_numbers) > 0:
+            if abs(serial_numbers[0][0] - serial_numbers[0][2]) > abs(serial_numbers[0][1] - serial_numbers[0][3]):
+                pin_1_location[0] = 0
+            else:
+                pin_1_location[0] = 1
+        if len(serial_letters) > 0:
+            if abs(serial_letters[0][0] - serial_letters[0][2]) > abs(serial_letters[0][1] - serial_letters[0][3]):
+                pin_1_location[0] = 1
+            else:
+                pin_1_location[0] = 0
+
+        heng_begain = -1
+        shu_begain = -1
+        serial_numbers_data = serial_numbers_data.astype(np.float32)
+        serial_numbers_data = serial_numbers_data.astype(np.int32)
+        # 删除0
+        new_serial_numbers_data = np.zeros((0, 5))
+        for i in range(len(serial_numbers_data)):
+            if serial_numbers_data[i][4] != 0:
+                new_serial_numbers_data = np.r_[new_serial_numbers_data, [serial_numbers_data[i]]]
+        serial_numbers_data = new_serial_numbers_data
+
+        if len(serial_numbers_data) > 0:
+            if abs(serial_numbers[0][0] - serial_numbers[0][2]) > abs(serial_numbers[0][1] - serial_numbers[0][3]):
+                if len(serial_numbers_data) >= 2:
+                    if len(serial_numbers_data[0]) == 5:
+                        serial_numbers_data = serial_numbers_data[np.argsort(serial_numbers_data[:, 4])]  # 按序号从小到大排序
+                        if serial_numbers_data[0, 0] < serial_numbers_data[(len(serial_numbers_data) - 1), 0]:
+                            heng_begain = 0
+                        else:
+                            heng_begain = 1
+            if abs(serial_numbers[0][0] - serial_numbers[0][2]) < abs(serial_numbers[0][1] - serial_numbers[0][3]):
+                if len(serial_numbers_data) >= 2:
+                    if len(serial_numbers_data[0]) == 5:
+                        serial_numbers_data = serial_numbers_data[np.argsort(serial_numbers_data[:, 4])]  # 按序号从小到大排序
+                        if serial_numbers_data[0, 1] < serial_numbers_data[(len(serial_numbers_data) - 1), 1]:
+                            shu_begain = 0
+                        else:
+                            shu_begain = 1
+        if len(serial_letters_data) > 0:
+            serial_letters_data = serial_letters_data.astype(np.float32)
+            serial_letters_data = serial_letters_data.astype(np.int32)
+            # 删除0
+            new_serial_letters_data = np.zeros((0, 5))
+            for i in range(len(serial_letters_data)):
+                if serial_letters_data[i][4] != 0:
+                    new_serial_letters_data = np.r_[new_serial_letters_data, [serial_letters_data[i]]]
+            serial_letters_data = new_serial_letters_data
+            if abs(serial_letters[0][0] - serial_letters[0][2]) > abs(serial_letters[0][1] - serial_letters[0][3]):
+                if len(serial_letters_data) >= 2:
+                    if len(serial_letters_data[0]) == 5:
+                        serial_letters_data = serial_letters_data[np.argsort(serial_letters_data[:, 4])]  # 按序号从小到大排序
+                        if serial_letters_data[0, 0] < serial_letters_data[(len(serial_letters_data) - 1), 0]:
+                            heng_begain = 0
+                        else:
+                            heng_begain = 1
+            if abs(serial_letters[0][0] - serial_letters[0][2]) < abs(serial_letters[0][1] - serial_letters[0][3]):
+                if len(serial_letters_data) >= 2:
+                    if len(serial_letters_data[0]) == 5:
+                        serial_letters_data = serial_letters_data[np.argsort(serial_letters_data[:, 4])]  # 按序号从小到大排序
+                        if serial_letters_data[0, 1] < serial_letters_data[(len(serial_letters_data) - 1), 1]:
+                            shu_begain = 0
+                        else:
+                            shu_begain = 1
+        if heng_begain == 0 and shu_begain == 0:
+            pin_1_location[1] = 0
+        if heng_begain == 1 and shu_begain == 0:
+            pin_1_location[1] = 1
+        if heng_begain == 1 and shu_begain == 1:
+            pin_1_location[1] = 2
+        if heng_begain == 0 and shu_begain == 1:
+            pin_1_location[1] = 3
+        if heng_begain == 0 and shu_begain == -1:
+            pin_1_location[1] = 0
+        if heng_begain == 1 and shu_begain == -1:
+            pin_1_location[1] = 1
+        if heng_begain == -1 and shu_begain == 0:
+            pin_1_location[1] = 0
+        if heng_begain == -1 and shu_begain == 1:
+            pin_1_location[1] = 3
+
+    return pin_num_x_serial, pin_num_y_serial, pin_1_location
+def Is_Loss_Pin(pin_map, pin_1_location, color):
+    '''
+    # pin_1_location = [X, Y],X = 0:横向用数字标记序号，纵向用字母标记序号；X= 1，横向用字母标记序号，纵向用数字标记序号
+    # pin_1_location = [X, Y],Y = 0 = 左上角,1= 右上角，2 = 右下角，3 = 左下角
+    '''
+    # pin_map = np.array([[1, 1, 1], [0, 0, 0], [1, 1, 1]])
+    letter = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'P', 'R', 'T', 'U', 'V', 'W',
+              'Y']
+    lost_pin = list([])
+    lost_color = list([])
+    num_y = pin_map.shape[0]  # 行数
+    num_x = pin_map.shape[1]  # 列数
+    # print(pin_map)
+    if pin_1_location[0] == 0 or pin_1_location[0] == -1:
+        if pin_1_location[1] == 0 or pin_1_location[1] == -1:
+            for i in range(len(pin_map)):
+                for j in range(len(pin_map[i])):
+                    if pin_map[i][j] == 0 and (i + 1) <= 20:
+                        string = letter[int(i)] + str(j + 1)
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+                    if pin_map[i][j] == 0 and i > 19:
+                        string = letter[int(((i + 1) // 20) - 1)] + letter[int(((i + 1) % 20) - 1)] + str(j + 1)
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+        elif pin_1_location[1] == 1:
+            for i in range(len(pin_map)):
+                for j in range(len(pin_map[i])):
+                    if pin_map[i][j] == 0 and (i + 1) <= 20:
+                        string = letter[int(i)] + str(num_x - j)
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+                    if pin_map[i][j] == 0 and i > 19:
+                        string = letter[int(((i + 1) // 20) - 1)] + letter[int(((i + 1) % 20) - 1)] + str(num_x - j)
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+        elif pin_1_location[1] == 2:
+            for i in range(len(pin_map)):
+                for j in range(len(pin_map[i])):
+                    if pin_map[i][j] == 0 and (i + 1) <= 20:
+                        string = letter[int(num_y - i - 1)] + str(num_x - j)
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+                    if pin_map[i][j] == 0 and i > 19:
+                        string = letter[int(((num_y - i) // 20) - 1)] + letter[int(((i + 1) % 20) - 1)] + str(num_x - j)
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+        elif pin_1_location[1] == 3:
+            for i in range(len(pin_map)):
+                for j in range(len(pin_map[i])):
+                    if pin_map[i][j] == 0 and (num_y - i - 1) < 20:
+                        # print(num_y - i - 1)
+                        string = letter[int(num_y - i - 1)] + str(j + 1)
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+                    if pin_map[i][j] == 0 and (num_y - i - 1) > 19:
+                        string = letter[int(((num_y - i) // 20) - 1)] + letter[int(((num_y - (i + 1)) % 20) )] + str(j + 1)
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+
+    if pin_1_location[0] == 1:
+        if pin_1_location[1] == 0 or pin_1_location[1] == -1:
+            for i in range(len(pin_map)):
+                for j in range(len(pin_map[i])):
+                    if pin_map[i][j] == 0 and (i + 1) <= 20:
+                        string = str(i + 1) + letter[int(j)]
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+                    if pin_map[i][j] == 0 and i > 19:
+                        string = str(i + 1) + letter[int(((j + 1) // 20) - 1)] + letter[int(((j + 1) % 20) - 1)]
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+        elif pin_1_location[1] == 1:
+            for i in range(len(pin_map)):
+                for j in range(len(pin_map[i])):
+                    if pin_map[i][j] == 0 and (i + 1) <= 20:
+                        string = str(num_x - i) + letter[int(j)]
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+                    if pin_map[i][j] == 0 and i > 19:
+                        string = str(num_x - i) + letter[int(((j + 1) // 20) - 1)] + letter[int(((j + 1) % 20) - 1)]
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+        elif pin_1_location[1] == 2:
+            for i in range(len(pin_map)):
+                for j in range(len(pin_map[i])):
+                    if pin_map[i][j] == 0 and (i + 1) <= 20:
+                        string = str(num_x - i) + letter[int(num_y - j - 1)]
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+                    if pin_map[i][j] == 0 and i > 19:
+                        string = str(num_x - i) + letter[int(((num_y - j) // 20) - 1)] + letter[int(((j + 1) % 20) - 1)]
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+        elif pin_1_location[1] == 3:
+            for i in range(len(pin_map)):
+                for j in range(len(pin_map[i])):
+                    if pin_map[i][j] == 0 and (i + 1) <= 20:
+                        string = str(i + 1) + letter[int(num_y - j - 1)]
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+                    if pin_map[i][j] == 0 and i > 19:
+                        string = str(i + 1) + letter[int(((num_y - j) // 20) - 1)] + letter[int(((j + 1) % 20) - 1)]
+                        string = list(string)
+                        string = ''.join(string)
+                        lost_pin.append(string)
+                        lost_color.append(color[i][j])
+
+    return lost_pin,  lost_color
+
+# 运行 BGA PIN 提取流程的入口。
+def extract_BGA_PIN():
+    """运行 BGA PIN 提取流程的入口（优化版：并行执行 + 精简逻辑）。"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    print("开始提取BGA的PIN")
+    package_classes = 'BGA'
+    package_path = page_path
+    img_path = f'{package_path}/bottom.jpg'
+
+    # 准备数据目录
+    os.makedirs(DATA, exist_ok=True)
+    path = f'{DATA}/bottom.jpg'
+
+    # 确保 `DATA_BOTTOM_CROP` 存在（用于保存 pinmap.jpg 等）
+    os.makedirs(DATA_BOTTOM_CROP, exist_ok=True)
+
+    # 仅当源文件与目标不同时才复制
+    if os.path.abspath(img_path) != os.path.abspath(path):
+        shutil.copy2(img_path, path)
+
+    # ============ 并行执行：yolo_classify 和 BGA_get_PIN ============
+    # yolo_classify 用于获取 bottom_border 和序列信息（计算 loss_pin 需要）
+    # BGA_get_PIN 直接获取最终的 pin_num_x_serial, pin_num_y_serial
+
+    yolo_result = None
+    pin_result = None
+
+    def run_yolo():
+        return yolo_classify(img_path, package_classes)
+
+    def run_bga_get_pin():
+        return BGA_get_PIN(path)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_yolo = executor.submit(run_yolo)
+        future_pin = executor.submit(run_bga_get_pin)
+
+        for future in as_completed([future_yolo, future_pin]):
+            try:
+                if future == future_yolo:
+                    yolo_result = future.result()
+                else:
+                    pin_result = future.result()
+            except Exception as e:
+                print(f"并行任务出错: {e}")
+
+    # 解析 yolo 结果
+    if yolo_result is not None:
+        (bottom_yolox_pairs, bottom_yolox_num, bottom_yolox_serial_num,
+         bottom_pin, bottom_other, bottom_pad, bottom_border,
+         bottom_angle_pairs, bottom_BGA_serial_num, bottom_BGA_serial_letter) = yolo_result
+        serial_numbers = bottom_BGA_serial_num
+        serial_letters = bottom_BGA_serial_letter
+    else:
+        bottom_border = np.empty((0, 4))
+        serial_numbers = np.empty((0, 4))
+        serial_letters = np.empty((0, 4))
+
+    # 解析 BGA_get_PIN 结果
+    if pin_result is not None:
+        _, _, pin_num_x_serial, pin_num_y_serial,_,_,_,rot = pin_result
+    else:
+        print("BGA_get_PIN 结果为空，重新调用")
+        _, _, pin_num_x_serial, pin_num_y_serial,_,_,_,rot = BGA_get_PIN(path)
+
+
+    # ============ 计算 loss_pin（使用 pinmap）============
+    pin_map, color = time_save_find_pinmap(bottom_border)
+    # print("pin_map", pin_map)
+
+    # 计算 pin_1_location（保持正确率）
+    # 简化逻辑：根据序列号/字母位置推断起始角
+    pin_1_location = [0, 0]  # 默认：横向数字、纵向字母，左上角起始
+    try:
+        if len(serial_letters) > 0 and len(serial_numbers) > 0:
+            # 根据序列位置确定方向
+            letter_positions = np.array([s[0] for s in serial_letters]) if hasattr(serial_letters[0], '__iter__') else serial_letters[:, 0]
+            number_positions = np.array([s[0] for s in serial_numbers]) if hasattr(serial_numbers[0], '__iter__') else serial_numbers[:, 0]
+
+            # 判断横纵向标记方式
+            letter_x_var = np.var(letter_positions) if len(letter_positions) > 1 else 0
+            number_x_var = np.var(number_positions) if len(number_positions) > 1 else 0
+
+            if letter_x_var < number_x_var:
+                pin_1_location[0] = 0  # 字母纵向排列
+            else:
+                pin_1_location[0] = 1  # 字母横向排列
+    except Exception as e:
+        print(f"计算 pin_1_location 时出错: {e}，使用默认值")
+
+    try:
+        loss_pin, loss_color = Is_Loss_Pin(pin_map, pin_1_location, color)
+    except:
+        loss_pin = []
+        loss_color = []
+
+    loss_pin1 = 'None' if len(loss_pin) == 0 else loss_pin
+
+    return pin_num_x_serial, pin_num_y_serial, loss_pin1, loss_color, rot
+
+
+def long_running_task(result_queue, bottom_border):
+    """后台线程执行 pinmap 检测并写入结果。"""
+
+    print()
+    print("***/开始检测pin/***")
+    result = find_pin(bottom_border)
+    result_queue.put(result)
+    print("***/结束检测pin/***")
+    print()
+
+
+if __name__ == '__main__':
+    pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color, rot = extract_BGA_PIN()
+    print(pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color)
+
+    # output_list = find_pin_core()

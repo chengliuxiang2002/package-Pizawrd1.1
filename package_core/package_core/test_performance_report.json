@@ -1,0 +1,290 @@
+{
+  "summary": {
+    "session_info": {
+      "test": true,
+      "start_time": "2025-12-24T13:13:45.184501",
+      "end_time": "2025-12-24T13:13:45.831322",
+      "total_duration": 0.6468212604522705
+    },
+    "total_records": 10,
+    "step_count": 2,
+    "step_total_time": 0.3189,
+    "function_count": 3,
+    "function_total_time": 0.2158,
+    "function_call_count": 6,
+    "model_count": 3,
+    "model_total_time": 0.1565,
+    "model_total_samples": 2,
+    "model_avg_throughput": 12.78,
+    "hotspot_count": 3
+  },
+  "steps": [
+    {
+      "name": "测试步骤1",
+      "call_count": 1,
+      "total_time": 0.1042,
+      "avg_time": 0.1042,
+      "min_time": 0.1042,
+      "max_time": 0.1042
+    },
+    {
+      "name": "测试步骤2",
+      "call_count": 1,
+      "total_time": 0.2147,
+      "avg_time": 0.2147,
+      "min_time": 0.2147,
+      "max_time": 0.2147
+    }
+  ],
+  "functions": [
+    {
+      "name": "__main__.outer_func",
+      "call_count": 3,
+      "total_time": 0.0922,
+      "avg_time": 0.0307,
+      "min_time": 0.0305,
+      "max_time": 0.0311
+    },
+    {
+      "name": "__main__.test_func",
+      "call_count": 5,
+      "total_time": 0.0784,
+      "avg_time": 0.0157,
+      "min_time": 0.0149,
+      "max_time": 0.0161
+    },
+    {
+      "name": "__main__.inner_func",
+      "call_count": 3,
+      "total_time": 0.0453,
+      "avg_time": 0.0151,
+      "min_time": 0.0149,
+      "max_time": 0.0153
+    }
+  ],
+  "models": [
+    {
+      "name": "DETR",
+      "call_count": 1,
+      "total_time": 0.0628,
+      "avg_time": 0.0628,
+      "min_time": 0.0628,
+      "max_time": 0.0628
+    },
+    {
+      "name": "DBNet",
+      "call_count": 1,
+      "total_time": 0.062,
+      "avg_time": 0.062,
+      "min_time": 0.062,
+      "max_time": 0.062
+    },
+    {
+      "name": "YOLO",
+      "call_count": 1,
+      "total_time": 0.0317,
+      "avg_time": 0.0317,
+      "min_time": 0.0317,
+      "max_time": 0.0317
+    }
+  ],
+  "models_detailed": [
+    {
+      "name": "DBNet",
+      "call_count": 1,
+      "total_time": 0.062,
+      "avg_time": 0.062,
+      "min_time": 0.062,
+      "max_time": 0.062,
+      "total_samples": 2,
+      "throughput": 32.26,
+      "preprocess_time": 0.0152,
+      "inference_time": 0.0307,
+      "postprocess_time": 0.0161,
+      "input_sizes": [
+        "640x480"
+      ],
+      "preprocess_pct": 24.6,
+      "inference_pct": 49.5,
+      "postprocess_pct": 25.9
+    }
+  ],
+  "function_analysis": {
+    "total_function_time": 0.2158,
+    "total_function_calls": 6,
+    "unique_functions": 3,
+    "hotspots": [
+      {
+        "name": "__main__.outer_func",
+        "call_count": 3,
+        "total_time": 0.0922,
+        "time_percentage": 42.72,
+        "avg_time": 0.0307
+      },
+      {
+        "name": "__main__.test_func",
+        "call_count": 5,
+        "total_time": 0.0784,
+        "time_percentage": 36.31,
+        "avg_time": 0.0157
+      },
+      {
+        "name": "__main__.inner_func",
+        "call_count": 3,
+        "total_time": 0.0453,
+        "time_percentage": 20.97,
+        "avg_time": 0.0151
+      }
+    ],
+    "most_called": [
+      {
+        "name": "__main__.test_func",
+        "call_count": 5,
+        "total_time": 0.0784
+      },
+      {
+        "name": "__main__.inner_func",
+        "call_count": 3,
+        "total_time": 0.0453
+      },
+      {
+        "name": "__main__.outer_func",
+        "call_count": 3,
+        "total_time": 0.0922
+      }
+    ],
+    "top_call_pairs": [
+      {
+        "pair": "__main__.outer_func -> __main__.inner_func",
+        "count": 3
+      }
+    ],
+    "call_graph_summary": [
+      {
+        "name": "__main__.inner_func",
+        "call_count": 3,
+        "total_time": 0.0453,
+        "self_time": 0.0,
+        "avg_time": 0.0151,
+        "callers": {
+          "__main__.outer_func": 3
+        },
+        "children": []
+      },
+      {
+        "name": "__main__.outer_func",
+        "call_count": 3,
+        "total_time": 0.0922,
+        "self_time": 0.0,
+        "avg_time": 0.0307,
+        "callers": {},
+        "children": [
+          {
+            "name": "__main__.inner_func",
+            "call_count": 3,
+            "total_time": 0.0453,
+            "self_time": 0.0,
+            "avg_time": 0.0151,
+            "callers": {
+              "__main__.outer_func": 3
+            },
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "hotspots": [
+    {
+      "name": "__main__.outer_func",
+      "call_count": 3,
+      "total_time": 0.0922,
+      "avg_time": 0.0307,
+      "time_percentage": 42.72,
+      "is_hotspot": true
+    },
+    {
+      "name": "__main__.test_func",
+      "call_count": 5,
+      "total_time": 0.0784,
+      "avg_time": 0.0157,
+      "time_percentage": 36.31,
+      "is_hotspot": true
+    },
+    {
+      "name": "__main__.inner_func",
+      "call_count": 3,
+      "total_time": 0.0453,
+      "avg_time": 0.0151,
+      "time_percentage": 20.97,
+      "is_hotspot": true
+    }
+  ],
+  "timeline": [
+    {
+      "name": "测试步骤1",
+      "category": "step",
+      "duration": 0.1042,
+      "timestamp": "2025-12-24T13:13:45.288701"
+    },
+    {
+      "name": "测试步骤2",
+      "category": "step",
+      "duration": 0.2147,
+      "timestamp": "2025-12-24T13:13:45.503377"
+    },
+    {
+      "name": "DETR",
+      "category": "model",
+      "duration": 0.0628,
+      "timestamp": "2025-12-24T13:13:45.566165"
+    },
+    {
+      "name": "YOLO",
+      "category": "model",
+      "duration": 0.0317,
+      "timestamp": "2025-12-24T13:13:45.597894"
+    },
+    {
+      "name": "DBNet",
+      "category": "model",
+      "duration": 0.062,
+      "timestamp": "2025-12-24T13:13:45.659893",
+      "batch_size": 2,
+      "preprocess_time": 0.015247821807861328,
+      "inference_time": 0.030663251876831055,
+      "postprocess_time": 0.01608896255493164,
+      "input_size": "640x480"
+    },
+    {
+      "name": "__main__.test_func",
+      "category": "function",
+      "duration": 0.0161,
+      "timestamp": "2025-12-24T13:13:45.675997"
+    },
+    {
+      "name": "__main__.test_func",
+      "category": "function",
+      "duration": 0.0158,
+      "timestamp": "2025-12-24T13:13:45.691770"
+    },
+    {
+      "name": "__main__.test_func",
+      "category": "function",
+      "duration": 0.0149,
+      "timestamp": "2025-12-24T13:13:45.706636"
+    },
+    {
+      "name": "__main__.test_func",
+      "category": "function",
+      "duration": 0.0158,
+      "timestamp": "2025-12-24T13:13:45.722436"
+    },
+    {
+      "name": "__main__.test_func",
+      "category": "function",
+      "duration": 0.0158,
+      "timestamp": "2025-12-24T13:13:45.738257"
+    }
+  ]
+}
