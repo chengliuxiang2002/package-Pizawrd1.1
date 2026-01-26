@@ -5,10 +5,12 @@ import os
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+import threading
 
 # F3.表格内容解析与判断 F4.表格规范化流程
 from package_core.Table_Processed.Table_function.GetTable import *
 
+PDF_UNSAFE_LOCK = threading.Lock()
 # ================= 配置区 (适配本地 Qwen2.5-VL) =================
 # 默认配置适配测试代码中的环境
 MODEL_HOST = os.getenv('TABLE_MODEL_HOST', '10.86.163.88')
@@ -87,6 +89,9 @@ def _model_predict_local(image):
         raise ValueError("Image preprocessing failed")
 
     url = f"http://{MODEL_HOST}:{MODEL_PORT}{MODEL_PATH}"
+    # SERVER_IP = "10.82.151.113"
+    # url = f"http://{SERVER_IP}/api/llm-proxy"
+    #"10.82.151.113"
 
     # 2. 构造 OpenAI 格式 Payload
     payload = {
@@ -199,14 +204,15 @@ def _process_single_page(args):
     """处理单个页面 (AI 优先 -> 传统兜底)"""
     pageNumber, TableCoordinate, pdfPath, packageType = args
     if not TableCoordinate:
-        return [], False, False
+        return [], False, False, False
 
     table = None
+    is_ai = False
 
     # --- 1. 大模型分支 ---
     if _model_alive():
         try:
-            print(f"INFO: [Page {pageNumber}] 调用本地 Qwen2.5-VL...")
+            print(f"INFO: [Page {pageNumber}] 调用服务器中 Qwen2.5-VL...")
             img = crop_pdf_page(pdfPath, pageNumber, TableCoordinate)
             resp_json = _model_predict_local(img)
             # resp_json = {"image": "C141373_数字信号处理器(DSP-DSC)_DSPIC33EP32MC204-I-PT_规格书_MICROCHIP(美国微芯)单片机(MCUMPUSOC)规格书_505.png", "status": "success", "output": "```json\n{\"parameters\": {\"A\": [0.8, 0.9, 1.0], \"A1\": [0.025, \"-\", 0.075], \"b/B\": [0.2, 0.25, 0.3], \"D\": [6.0, 6.0, 6.0], \"E\": [6.0, 6.0, 6.0], \"e\": [0.5, 0.5, 0.5], \"L\": [0.2, 0.25, 0.3], \"e\": [0.5, 0.5, 0.5], \"D2\": [4.4, 4.55, 4.7], \"E2\": [4.4, 4.55, 4.7]}}\n```"}
@@ -217,29 +223,34 @@ def _process_single_page(args):
                 print(f"INFO: [Page {pageNumber}] AI 识别成功")
                 type_result = judge_if_package_table(table, packageType)
                 integrity_result = judge_if_complete_table(table, packageType)
-                return table, type_result, integrity_result
+                is_ai = True
+                return table, type_result, integrity_result, True
             else:
                 print(f"WARN: [Page {pageNumber}] AI 识别结果为空，回退传统算法")
                 table = None
         except Exception as e:
             print(f"WARN: [Page {pageNumber}] AI 调用异常: {e}，回退传统算法")
             table = None
+            is_ai = False
 
     # --- 2. 传统算法兜底 ---
     if table is None:
         # print(f"INFO: [Page {pageNumber}] 使用传统算法")
-        table = get_table(pdfPath, pageNumber, TableCoordinate)
+        with PDF_UNSAFE_LOCK:
+            table = get_table(pdfPath, pageNumber, TableCoordinate)
+        is_ai = False
         print(table)
 
     # --- 3. 后处理 ---
     if not table:
-        return [], False, False
+        return [], False, False, False
 
     table = table_checked(table)
     type_result = judge_if_package_table(table, packageType)
     integrity_result = judge_if_complete_table(table, packageType)
 
-    return table, type_result, integrity_result
+    return table, type_result, integrity_result, is_ai
+
 
 def extract_table(pdfPath, page_Number_List, Table_Coordinate_List, packageType):
     """
@@ -255,6 +266,7 @@ def extract_table(pdfPath, page_Number_List, Table_Coordinate_List, packageType)
     Table = []
     Type = []
     Integrity = []
+    Is_AI_Source = []
 
     try:
         # 准备并行任务参数
@@ -262,17 +274,25 @@ def extract_table(pdfPath, page_Number_List, Table_Coordinate_List, packageType)
             (pageNumber, TableCoordinate, pdfPath, packageType)
             for pageNumber, TableCoordinate in zip(page_Number_List, Table_Coordinate_List)
         ]
+
+        # 结果字典
+        results = {}
+
         # 如果只有一个页面，直接处理（避免线程开销）
         if len(tasks) == 1:
-            table, type_result, integrity_result = _process_single_page(tasks[0])
-            Table.append(table)
-            Type.append(type_result)
-            Integrity.append(integrity_result)
+            try:
+                table, type_result, integrity_result, is_ai = _process_single_page(tasks[0])
+            except ValueError:
+                # 防御性编程：万一 _process_single_page 旧版本只返回3个，做兼容（可选）
+                res = _process_single_page(tasks[0])
+                table, type_result, integrity_result = res[0], res[1], res[2]
+                is_ai = False
+
+            # 单独存入 results 字典，方便后面统一处理（或者像你原来那样直接 append 也可以，但建议统一逻辑）
+            results[0] = (table, type_result, integrity_result, is_ai)
+
         else:
             # 多页面并行处理
-            # 使用字典保持顺序
-            results = {}
-
             with ThreadPoolExecutor(max_workers=min(3, len(tasks))) as executor:
                 future_to_idx = {
                     executor.submit(_process_single_page, task): idx
@@ -284,16 +304,20 @@ def extract_table(pdfPath, page_Number_List, Table_Coordinate_List, packageType)
                     try:
                         results[idx] = future.result()
                     except Exception as e:
+                        print(e)
                         print(f"处理页面 {page_Number_List[idx]} 时出错: {e}")
-                        results[idx] = ([], False, False)
+                        results[idx] = ([], False, False, False)
 
-            # 按原始顺序整理结果
-            for idx in range(len(tasks)):
-                table, type_result, integrity_result = results.get(idx, ([], False, False))
-                Table.append(table)
-                Type.append(type_result)
-                Integrity.append(integrity_result)
-                print("##")
+        # 按原始顺序整理结果
+        for idx in range(len(tasks)):
+            # get 的默认值也必须是 4 个值
+            table, type_result, integrity_result, is_ai = results.get(idx, ([], False, False, False))
+
+            Table.append(table)
+            Type.append(type_result)
+            Integrity.append(integrity_result)
+            Is_AI_Source.append(is_ai)
+            print("##")
 
     finally:
         # 清理 PDF 缓存
@@ -303,9 +327,27 @@ def extract_table(pdfPath, page_Number_List, Table_Coordinate_List, packageType)
     table = table_Select(Table, Type, Integrity)
     table = table_checked(table)
     # 提取表内信息
-    data = postProcess(table, packageType)
-
+    if any(Is_AI_Source):
+        data = _ai_data_bridge(table, packageType)
+    else:
+        data = postProcess(table, packageType)
     return data
+
+
+def _ai_data_bridge(ai_table, packageType):
+    """
+    将 AI 提取的 Key-Value 列表转换为 postProcess 输出的固定位置列表
+    """
+    # 1. 初始化空模板：[['', '', '', ''], ... ]
+    standard_data = [['', '', '', ''] for _ in range(20)]
+
+    # 2. 使用 dataProcess.py 中现有的映射逻辑
+    try:
+        final_data = add_info_from_KeyInfo(standard_data, ai_table, packageType)
+        return final_data
+    except Exception as e:
+        print(f"WARN: AI 数据映射标准格式失败: {e}")
+        return standard_data
 
 def save_table_image(pdfPath, pageNumber, tableCoordinate):
     """

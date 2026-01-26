@@ -67,7 +67,7 @@ class PackageDetectionPipeline:
 
         return detection_results
 
-    def step3_match_keywords(self, detection_results, page_list):
+    def step3_match_keywords(self, detection_results, page_list, rotation_dict=None):
         """步骤3: 将关键字与DETR检测结果进行匹配，返回一个被修改和增强后的结果。"""
         print("\n步骤3: 开始关键字与视图匹配...")
         if not detection_results:

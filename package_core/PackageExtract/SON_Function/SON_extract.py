@@ -13,6 +13,16 @@ from package_core.PackageExtract.BGA_Function.pre_extract import (
     targeted_ocr
 )
 
+
+def safe_swap_1_3(data_list):
+    """
+    如果列表长度至少为3，则交换索引0和索引2的元素。
+    否则什么都不做（防止空列表报错）。
+    """
+    if len(data_list) >= 3:
+        data_list[0], data_list[2] = data_list[2], data_list[0]
+    return data_list
+
 def extract_SON(
         image_root: str,
         package_classes: str,
@@ -97,54 +107,78 @@ def extract_SON(
     print(f'bottom_D2:{bottom_D2}')
     print(f'bottom_E2:{bottom_E2}')
 
-    # path = 'Result\Package_view\pin\SON_adjacent_pins.txt'
-    # pin_box, pin_boxh, pin_boxv = SON_pipeline.extract_pin_boxes_from_txt(path)
-    #
-    # bottom_b, bottom_L = SON_pipeline.extract_bottom_b_L(L3, triple_factor, pin_box)
-    # print(f'bottom_b:{bottom_b}')
-    # print(f'bottom_L:{bottom_L}')
-    #
-    # pin_box = [[167, 297, 188, 337],[204, 296, 231, 333]]
-    # bottom_pitch = SON_pipeline.extract_bottom_pitch(L3,triple_factor,pin_box)
-    # print(f'bottom_pitch:{bottom_pitch}')
-    #
-    # parameter_list = [[''] + bottom_pitch, ['', '', '', ''],
-    #                   [''] + side_A, [''] + side_A1, ['', '', '', ''], [''] + top_D, [''] + top_E,
-    #                   ['', '', '', ''], [''] + bottom_L, [''] + bottom_b, ['']+side_A3, ['', '', '', ''],
-    #                   [''] + bottom_D2, [''] + bottom_E2]
-    #
-    # return parameter_list
+    path = 'Result\Package_view\pin\SON_adjacent_pin.txt'
+    pin_box, pin_boxes = SON_pipeline.extract_pin_boxes_from_txt(path)
+    print(f'pin_box:{pin_box}')
+    print(f'pin_boxes:{pin_boxes}')
+
+
+    bottom_b, bottom_L = SON_pipeline.extract_bottom_b_L(L3, triple_factor, pin_box)
+    print(f'bottom_b:{bottom_b}')
+    print(f'bottom_L:{bottom_L}')
+
+
+    bottom_pitch = SON_pipeline.extract_bottom_pitch(L3,triple_factor,pin_boxes)
+    print(f'bottom_pitch:{bottom_pitch}')
+
+
+    all_vars = [
+        bottom_pitch, side_A, side_A1, top_D, top_E,
+        bottom_L, bottom_b, side_A3, bottom_D2, bottom_E2
+    ]
+
+    for var in all_vars:
+        safe_swap_1_3(var)
+
+    parameter_list = [
+        [''] + bottom_pitch,
+        ['', '', '', ''],
+        [''] + side_A,
+        [''] + side_A1,
+        ['', '', '', ''],
+        [''] + top_D,
+        [''] + top_E,
+        ['', '', '', ''],
+        [''] + bottom_L,
+        [''] + bottom_b,
+        [''] + side_A3,
+        ['', '', '', ''],
+        [''] + bottom_D2,
+        [''] + bottom_E2
+    ]
+
+    return parameter_list
 
     # #########################################################################
     #
-    print("开始测试F4.8")
-    L3 = common_pipeline.extract_pin_serials(L3, package_classes)
-    L3 = common_pipeline.match_pairs_with_text(L3, key)
-    print("开始测试F4.9")
-    L3 = common_pipeline.finalize_pairs(L3)
-    SON_parameter_list, nx, ny = SON_pipeline.compute_SON_parameters(L3)
-
-    parameter_list = get_SON_parameter_data(SON_parameter_list, nx, ny)
-
-    print("开始测试F4.10",parameter_list)
-    # 20250621修改顺序
-    new_parameter_list = []
-    new_parameter_list.append(parameter_list[8])
-    new_parameter_list.append(parameter_list[6])
-    new_parameter_list.append(parameter_list[2])
-    new_parameter_list.append(parameter_list[3])
-    new_parameter_list.append([0, '-', '-', '-'])
-    new_parameter_list.append(parameter_list[0])
-    new_parameter_list.append(parameter_list[1])
-    new_parameter_list.append([0, '-', '-', '-'])
-    new_parameter_list.append(parameter_list[4])
-    new_parameter_list.append(parameter_list[5])
-    new_parameter_list.append(parameter_list[12])
-    new_parameter_list.append([0, '-', '-', '-'])
-    new_parameter_list.append(parameter_list[10])
-    new_parameter_list.append(parameter_list[11])
-
-    return new_parameter_list
+    # print("开始测试F4.8")
+    # L3 = common_pipeline.extract_pin_serials(L3, package_classes)
+    # L3 = common_pipeline.match_pairs_with_text(L3, key)
+    # print("开始测试F4.9")
+    # L3 = common_pipeline.finalize_pairs(L3)
+    # SON_parameter_list, nx, ny = SON_pipeline.compute_SON_parameters(L3)
+    #
+    # parameter_list = get_SON_parameter_data(SON_parameter_list, nx, ny)
+    #
+    # print("开始测试F4.10",parameter_list)
+    # # 20250621修改顺序
+    # new_parameter_list = []
+    # new_parameter_list.append(parameter_list[8])
+    # new_parameter_list.append(parameter_list[6])
+    # new_parameter_list.append(parameter_list[2])
+    # new_parameter_list.append(parameter_list[3])
+    # new_parameter_list.append([0, '-', '-', '-'])
+    # new_parameter_list.append(parameter_list[0])
+    # new_parameter_list.append(parameter_list[1])
+    # new_parameter_list.append([0, '-', '-', '-'])
+    # new_parameter_list.append(parameter_list[4])
+    # new_parameter_list.append(parameter_list[5])
+    # new_parameter_list.append(parameter_list[12])
+    # new_parameter_list.append([0, '-', '-', '-'])
+    # new_parameter_list.append(parameter_list[10])
+    # new_parameter_list.append(parameter_list[11])
+    #
+    # return new_parameter_list
 
 
 

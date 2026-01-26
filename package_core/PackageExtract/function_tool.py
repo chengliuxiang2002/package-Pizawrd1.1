@@ -7,6 +7,7 @@ import os
 import math
 import numpy as np
 import copy
+from .get_pairs_data_present5_test import max_maybe_data_medium
 def find_list(dic_list, listname):
     """
     在字典列表中寻找名字为listname的列表/矩阵，返回列表/矩阵
@@ -256,10 +257,13 @@ def get_BGA_parameter_data(BGA_parameter_list, nx, ny):
         parameter_list[0][1] = round(BGA_parameter_list[6]['maybe_data'][0]['max_medium_min'][2], 4)
         parameter_list[0][2] = round(BGA_parameter_list[6]['maybe_data'][0]['max_medium_min'][1], 4)
         parameter_list[0][3] = round(BGA_parameter_list[6]['maybe_data'][0]['max_medium_min'][0], 4)
-    if len(BGA_parameter_list[7]['maybe_data']) > 0:
-        parameter_list[1][1] = round(BGA_parameter_list[7]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[1][2] = round(BGA_parameter_list[7]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[1][3] = round(BGA_parameter_list[7]['maybe_data'][0]['max_medium_min'][0], 4)
+        parameter_list[1][1] = round(BGA_parameter_list[6]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[1][2] = round(BGA_parameter_list[6]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[1][3] = round(BGA_parameter_list[6]['maybe_data'][0]['max_medium_min'][0], 4)
+    # if len(BGA_parameter_list[7]['maybe_data']) > 0:
+    #     parameter_list[1][1] = round(BGA_parameter_list[7]['maybe_data'][0]['max_medium_min'][2], 4)
+    #     parameter_list[1][2] = round(BGA_parameter_list[7]['maybe_data'][0]['max_medium_min'][1], 4)
+    #     parameter_list[1][3] = round(BGA_parameter_list[7]['maybe_data'][0]['max_medium_min'][0], 4)
     # PIN行数
     # if nx > 0:
     # parameter_list[9][1] = nx
@@ -280,24 +284,24 @@ def get_BGA_parameter_data(BGA_parameter_list, nx, ny):
         parameter_list[5][1] = round(BGA_parameter_list[5]['maybe_data'][0]['max_medium_min'][2], 4)
         parameter_list[5][2] = round(BGA_parameter_list[5]['maybe_data'][0]['max_medium_min'][1], 4)
         parameter_list[5][3] = round(BGA_parameter_list[5]['maybe_data'][0]['max_medium_min'][0], 4)
-    # 实体长
+    # 实体长 #0120更新 parameter_list中的第七项
     if len(BGA_parameter_list[2]['maybe_data']) > 0:
-        parameter_list[6][1] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[6][2] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[6][3] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][0], 4)
+        parameter_list[6][1] = round(BGA_parameter_list[2]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[2])]['max_medium_min'][2], 4)
+        parameter_list[6][2] = round(BGA_parameter_list[2]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[2])]['max_medium_min'][1], 4)
+        parameter_list[6][3] = round(BGA_parameter_list[2]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[2])]['max_medium_min'][0], 4)
     elif len(BGA_parameter_list[3]['maybe_data']) > 0:
-        parameter_list[6][1] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[6][2] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[6][3] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][0], 4)
-    # 实体宽
+        parameter_list[6][1] = round(BGA_parameter_list[3]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[3])]['max_medium_min'][2], 4)
+        parameter_list[6][2] = round(BGA_parameter_list[3]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[3])]['max_medium_min'][1], 4)
+        parameter_list[6][3] = round(BGA_parameter_list[3]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[3])]['max_medium_min'][0], 4)
+    # 实体宽 #parameter_list中的第八项
     if len(BGA_parameter_list[3]['maybe_data']) > 0:
-        parameter_list[7][1] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[7][2] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[7][3] = round(BGA_parameter_list[3]['maybe_data'][0]['max_medium_min'][0], 4)
+        parameter_list[7][1] = round(BGA_parameter_list[3]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[3])]['max_medium_min'][2], 4)
+        parameter_list[7][2] = round(BGA_parameter_list[3]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[3])]['max_medium_min'][1], 4)
+        parameter_list[7][3] = round(BGA_parameter_list[3]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[3])]['max_medium_min'][0], 4)
     elif len(BGA_parameter_list[2]['maybe_data']) > 0:
-        parameter_list[7][1] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][2], 4)
-        parameter_list[7][2] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][1], 4)
-        parameter_list[7][3] = round(BGA_parameter_list[2]['maybe_data'][0]['max_medium_min'][0], 4)
+        parameter_list[7][1] = round(BGA_parameter_list[2]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[2])]['max_medium_min'][2], 4)
+        parameter_list[7][2] = round(BGA_parameter_list[2]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[2])]['max_medium_min'][1], 4)
+        parameter_list[7][3] = round(BGA_parameter_list[2]['maybe_data'][max_maybe_data_medium(BGA_parameter_list[2])]['max_medium_min'][0], 4)
 
     #12.22新加Φ：
     if len(BGA_parameter_list[17]['maybe_data']) > 0:
@@ -511,7 +515,7 @@ def alter_QFP_parameter_data(QFP_parameter_list):
 
 
 
-def get_SOP_parameter_data(SOP_parameter_list, nx, ny):
+def get_SOP_parameter_data(SOP_parameter_list, nx, ny,span_x):
     """
     实体长（body x=D）
     实体宽（body y=E）
@@ -567,6 +571,10 @@ def get_SOP_parameter_data(SOP_parameter_list, nx, ny):
         parameter_list[3][2] = round(SOP_parameter_list[5]['maybe_data'][0]['max_medium_min'][1], 4)
         parameter_list[3][3] = round(SOP_parameter_list[5]['maybe_data'][0]['max_medium_min'][0], 4)
     # PIN长
+    if len(SOP_parameter_list[10]['maybe_data']) > 0:
+        parameter_list[4][1] = round(SOP_parameter_list[10]['maybe_data'][0]['max_medium_min'][2], 4)
+        parameter_list[4][2] = round(SOP_parameter_list[10]['maybe_data'][0]['max_medium_min'][1], 4)
+        parameter_list[4][3] = round(SOP_parameter_list[10]['maybe_data'][0]['max_medium_min'][0], 4)
     # PIN宽
     if len(SOP_parameter_list[7]['maybe_data']) > 0:
         parameter_list[5][1] = round(SOP_parameter_list[7]['maybe_data'][0]['max_medium_min'][2], 4)
@@ -592,6 +600,12 @@ def get_SOP_parameter_data(SOP_parameter_list, nx, ny):
         parameter_list[8][2] = round(SOP_parameter_list[7]['maybe_data'][0]['max_medium_min'][1], 4)
         parameter_list[8][3] = round(SOP_parameter_list[7]['maybe_data'][0]['max_medium_min'][0], 4)
     # PIN端距
+    if len(span_x) > 0:
+        data_source = span_x[0]['max_medium_min']
+        parameter_list[9][1] = round(data_source[2], 4)
+        parameter_list[9][2] = round(data_source[1], 4)
+        parameter_list[9][3] = round(data_source[0], 4)
+
     # 散热盘长(thermal_x=D2)
     if len(SOP_parameter_list[8]['maybe_data']) > 0:
         parameter_list[10][1] = round(SOP_parameter_list[8]['maybe_data'][0]['max_medium_min'][2], 4)

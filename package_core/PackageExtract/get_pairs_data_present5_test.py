@@ -41,6 +41,8 @@ except ModuleNotFoundError:
 
 # 全局路径 - 使用统一的路径管理函数
 DATA = result_path('Package_extract', 'data')
+PACKAGE_EXTRACT = os.path.dirname(DATA) #data的上一级目录
+CLEAN_BOTTOM = result_path('Package_extract' , 'clean_bottom')
 DATA_BOTTOM_CROP = result_path('Package_extract', 'data_bottom_crop')
 DATA_COPY = result_path('Package_extract', 'data_copy')
 ONNX_OUTPUT = result_path('Package_extract', 'onnx_output')
@@ -981,7 +983,4521 @@ def calculate_projection_ratio(short_arrow, long_arrow):
 #     pairs_length = remove_contained_arrows(pairs_length)
 #     return pairs_length
 
-#####################优化######################
+####################优化######################
+# def find_pairs_length(img_path, pairs, test_mode):
+#     '''
+#     功能：检测标尺线附近成对的引线
+#     pairs np.二维数组[x1,y1,x2,y2,0 = outside 1 = inside]
+#     img_path str
+#     '''
+#     print("***/开始引线和标尺线的匹配/***")
+#     # 1.根据pinmap所在位置推测出大概十字线坐标
+#     pin_map_limation = get_np_array_in_txt(f'{YOLO_DATA}/pin_map_limation.txt')
+#     w, h = get_img_info(img_path)
+#     a = np.array(([1, 1, 1, 1]))
+#     if (pin_map_limation != a).all():
+#         heng = (pin_map_limation[0][3] + pin_map_limation[0][1]) * 0.5 / 2
+#         shu = (pin_map_limation[0][2] + pin_map_limation[0][0]) * 0.5 / 2
+#     if img_path == f'{YOLO_DATA}/side.jpg' or img_path == f'{YOLO_DATA}/top.jpg':
+#         heng = h / 2
+#         shu = w / 2
+ 
+#     ver_lines_heng, ver_lines_shu = find_all_lines(img_path, test_mode)
+#     # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_heng.txt")
+#     # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_shu.txt")
+#     pairs_length = np.zeros((0, 13))  # 存储pairs以及所表示的距离
+#     pairs_length_middle = np.zeros(13)
+ 
+#     # 横向直线的坐标排列np.二维数组[x1,y1,x2,y2]改为x1<x2 y1<y2
+#     new_ver_lines = np.zeros((0, 4))
+#     for i in range(len(ver_lines_heng)):
+#         if ver_lines_heng[i][0] > ver_lines_heng[i][2]:
+#             c = ver_lines_heng[i][0]
+#             ver_lines_heng[i][0] = ver_lines_heng[i][2]
+#             ver_lines_heng[i][2] = c
+#         if ver_lines_heng[i][1] > ver_lines_heng[i][3]:
+#             c = ver_lines_heng[i][1]
+#             ver_lines_heng[i][1] = ver_lines_heng[i][3]
+#             ver_lines_heng[i][3] = c
+#     # 滤除较短的直线
+#     min_length = 10  # 最短直线长
+#     for i in range(len(ver_lines_heng)):
+#         if max(abs(ver_lines_heng[i][2] - ver_lines_heng[i][0]),
+#                abs(ver_lines_heng[i][3] - ver_lines_heng[i][1])) > min_length:
+#             new_ver_lines = np.r_[new_ver_lines, [ver_lines_heng[i]]]
+#     ver_lines_heng = new_ver_lines
+#     min_length = 20  # 最短直线长
+#     new_ver_lines = np.zeros((0, 4))
+#     ver_lines_shu = np.array(ver_lines_shu)
+#     for i in range(len(ver_lines_shu)):
+#         if max(abs(ver_lines_shu[i][2] - ver_lines_shu[i][0]),
+#                abs(ver_lines_shu[i][3] - ver_lines_shu[i][1])) > min_length:
+#             new_ver_lines = np.r_[new_ver_lines, [ver_lines_shu[i]]]
+#     ver_lines_shu = new_ver_lines
+    
+#     # 新增：计算引线与箭头的匹配评分函数 - 简化版本，主要考虑距离
+#     def calculate_match_score_simple(arrow_pair, line, heng, is_left=True, is_top=None):
+#         """
+#         简化版匹配评分，支持水平和竖直方向
+#         现在支持水平横线作为竖直箭头的引线
+#         """
+#         score = 0
+        
+#         # 判断是水平箭头还是竖直箭头
+#         arrow_width = arrow_pair[2] - arrow_pair[0]
+#         arrow_height = arrow_pair[3] - arrow_pair[1]
+#         is_horizontal = arrow_width > arrow_height
+        
+#         # 判断line是水平还是竖直
+#         line_width = line[2] - line[0]
+#         line_height = line[3] - line[1]
+#         line_is_horizontal = line_width > line_height
+        
+#         if is_horizontal:
+#             # 水平箭头处理 - 期望竖直引线
+#             if line_is_horizontal:
+#                 # 如果line是水平的，不适合作为水平箭头的引线
+#                 return -1000
+                
+#             # 原来的水平箭头处理代码
+#             arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+#             line_y_center = (line[1] + line[3]) / 2
+#             line_y_range = line[3] - line[1]
+#             arrow_y_range = arrow_pair[3] - arrow_pair[1]
+            
+#             # 计算y方向重叠
+#             y_overlap_start = max(arrow_pair[1], line[1])
+#             y_overlap_end = min(arrow_pair[3], line[3])
+#             y_overlap = max(0, y_overlap_end - y_overlap_start)
+            
+#             # 如果完全没有重叠，检查距离是否在可接受范围内
+#             if y_overlap == 0:
+#                 # 计算最近距离
+#                 y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
+#                 if y_distance > 3 * arrow_y_range:  # 距离超过3倍箭头高度
+#                     return -1000  # 完全不匹配
+            
+#             # 2. 水平距离评分 - 这是最重要的因素
+#             if is_left:
+#                 x_distance = abs(line[0] - arrow_pair[0])
+#             else:
+#                 x_distance = abs(line[0] - arrow_pair[2])
+            
+#             # 距离越小分数越高
+#             if x_distance <= 50:
+#                 score = 100 * (1 - x_distance / 50)
+#             else:
+#                 score = max(0, 10 * (1 - x_distance / 100))
+            
+#             # 3. 重叠奖励
+#             if y_overlap > 0:
+#                 overlap_ratio = y_overlap / min(arrow_y_range, line_y_range)
+#                 score += 20 * overlap_ratio
+            
+#             # 4. Y方向中心对齐奖励
+#             center_diff = abs(arrow_y_center - line_y_center)
+#             if center_diff < 30:
+#                 score += 10 * (1 - center_diff / 30)
+            
+#         else:
+#             # 竖直箭头处理 - 期望水平引线
+#             if not line_is_horizontal:
+#                 # 如果line是竖直的，不适合作为竖直箭头的引线
+#                 return -1000
+                
+#             # 现在line是水平横线
+#             line_y = line[1]  # 水平横线的y坐标
+            
+#             # 计算x方向重叠
+#             x_overlap_start = max(arrow_pair[0], line[0])
+#             x_overlap_end = min(arrow_pair[2], line[2])
+#             x_overlap = max(0, x_overlap_end - x_overlap_start)
+            
+#             # 如果完全没有重叠，检查距离是否在可接受范围内
+#             if x_overlap == 0:
+#                 # 计算最近距离
+#                 x_distance = min(abs(arrow_pair[0] - line[2]), abs(arrow_pair[2] - line[0]))
+#                 if x_distance > 3 * arrow_width:  # 距离超过3倍箭头宽度
+#                     return -1000  # 完全不匹配
+            
+#             # 2. 竖直距离评分
+#             if is_top:
+#                 y_distance = abs(line_y - arrow_pair[1])  # 到箭头上端的距离
+#             else:
+#                 y_distance = abs(line_y - arrow_pair[3])  # 到箭头下端的距离
+            
+#             # 距离越小分数越高
+#             if y_distance <= 50:
+#                 score = 100 * (1 - y_distance / 50)
+#             else:
+#                 score = max(0, 10 * (1 - y_distance / 100))
+            
+#             # 3. 重叠奖励
+#             if x_overlap > 0:
+#                 overlap_ratio = x_overlap / min(arrow_width, line_width)
+#                 score += 20 * overlap_ratio
+            
+#             # 4. X方向中心对齐奖励
+#             arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
+#             line_x_center = (line[0] + line[2]) / 2
+#             center_diff = abs(arrow_x_center - line_x_center)
+#             if center_diff < 30:
+#                 score += 10 * (1 - center_diff / 30)
+        
+#         return score
+    
+#     ratio = 0.4
+#     ra = 2
+#     # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\\\ver_lines_heng.txt")
+#     # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\\\ver_lines_shu.txt")
+#     print("开始视图**")
+    
+#     for i in range(len(pairs)):
+#         print("一组pairs开始*")
+#         print(f'开始{pairs[i]}判断')
+#         print(f'横{heng}')
+#         print(f'竖{shu}')
+        
+#         if pairs[i][4] == 0:  # 外向标尺线
+#             print("外向")
+#             ratio = 0.3  # 增加ratio，让搜索范围更大
+            
+#             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
+#                 print("横向")
+#                 left_straight = np.zeros((0, 6))  # 增加一列存储评分
+#                 right_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_shu)):
+#                     # 简化：主要根据水平距离匹配
+#                     left_distance = abs(ver_lines_shu[j][0] - pairs[i][0])
+#                     right_distance = abs(ver_lines_shu[j][0] - pairs[i][2])
+                    
+#                     # 左引线匹配条件
+#                     if left_distance < 50:  # 距离小于50像素
+#                         # 检查Y方向是否有重叠或接近
+#                         y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+#                         y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+#                         y_overlap = max(0, y_overlap_end - y_overlap_start)
+                        
+#                         if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+#                                                 abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
+#                             # 计算简化评分
+#                             left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                            
+#                             if left_score > 0:
+#                                 middle[0:4] = ver_lines_shu[j]
+#                                 middle[4] = left_distance  # 存储距离
+#                                 middle[5] = left_score  # 存储评分
+#                                 left_straight = np.r_[left_straight, [middle]]
+#                                 print(f"外向横pairs找到左竖线，距离: {left_distance}, 评分: {left_score}")
+                    
+#                     # 右引线匹配条件
+#                     if right_distance < 50:  # 距离小于50像素
+#                         # 检查Y方向是否有重叠或接近
+#                         y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+#                         y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+#                         y_overlap = max(0, y_overlap_end - y_overlap_start)
+                        
+#                         if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+#                                                 abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
+#                             # 计算简化评分
+#                             right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                            
+#                             if right_score > 0:
+#                                 middle[0:4] = ver_lines_shu[j]
+#                                 middle[4] = right_distance  # 存储距离
+#                                 middle[5] = right_score  # 存储评分
+#                                 right_straight = np.r_[right_straight, [middle]]
+#                                 print(f"外向横pairs找到右竖线，距离: {right_distance}, 评分: {right_score}")
+                
+#                 # 按距离从小到大排序（主要排序依据），距离相同再按评分排序
+#                 if len(left_straight) > 0:
+#                     # 先按距离排序，距离小的在前
+#                     left_straight = left_straight[np.argsort(left_straight[:, 4])]
+#                     # 如果前几个距离相同，再按评分排序
+#                     # 简单实现：取距离最小的几个，再按评分排序
+#                     min_distance = left_straight[0, 4]
+#                     same_distance_indices = np.where(left_straight[:, 4] <= min_distance + 1)[0]
+#                     if len(same_distance_indices) > 1:
+#                         # 对距离相同的部分按评分排序
+#                         same_distance_lines = left_straight[same_distance_indices]
+#                         same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
+#                         left_straight[same_distance_indices] = same_distance_lines
+                
+#                 if len(right_straight) > 0:
+#                     # 先按距离排序，距离小的在前
+#                     right_straight = right_straight[np.argsort(right_straight[:, 4])]
+#                     # 如果前几个距离相同，再按评分排序
+#                     min_distance = right_straight[0, 4]
+#                     same_distance_indices = np.where(right_straight[:, 4] <= min_distance + 1)[0]
+#                     if len(same_distance_indices) > 1:
+#                         # 对距离相同的部分按评分排序
+#                         same_distance_lines = right_straight[same_distance_indices]
+#                         same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
+#                         right_straight[same_distance_indices] = same_distance_lines
+                
+#                 # 根据找到的引线数量处理
+#                 if len(left_straight) > 0 and len(right_straight) > 0:
+#                     # 找到两条引线，直接使用距离最小的
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                     pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                     pairs_length_middle[12] = abs(left_straight[0, 0] - right_straight[0, 0])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print(f"找到两条引线，左距离: {left_straight[0, 4]}, 右距离: {right_straight[0, 4]}")
+#                 elif len(left_straight) > 0 or len(right_straight) > 0:
+#                     # 只找到一条引线，生成另一条
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     # 如果找到左侧引线
+#                     if len(left_straight) > 0:
+#                         pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                         left_line = left_straight[0, 0:4]
+                        
+#                         # 计算左侧引线与箭头对的距离
+#                         left_distance = left_line[0] - pairs[i][0]
+                        
+#                         # 生成右侧引线（与左侧对称）
+#                         right_line = [
+#                             pairs[i][2] - abs(left_distance),  # 保持与左侧对称的距离
+#                             left_line[1],  # y1 - 保持与左侧引线相同的高度
+#                             pairs[i][2] - abs(left_distance),  # x2 - 保持与左侧对称的距离
+#                             left_line[3]   # y2 - 保持与左侧引线相同的高度
+#                         ]
+#                         pairs_length_middle[8:12] = right_line
+#                         print("根据左侧引线生成右侧引线")
+                    
+#                     # 如果找到右侧引线
+#                     elif len(right_straight) > 0:
+#                         pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                         right_line = right_straight[0, 0:4]
+                        
+#                         # 计算右侧引线与箭头对的距离
+#                         right_distance = right_line[0] - pairs[i][2]
+                        
+#                         # 生成左侧引线（与右侧对称）
+#                         left_line = [
+#                             pairs[i][0] + abs(right_distance),  # 保持与右侧对称的距离
+#                             right_line[1],  # y1 - 保持与右侧引线相同的高度
+#                             pairs[i][0] + abs(right_distance),  # x2 - 保持与右侧对称的距离
+#                             right_line[3]   # y2 - 保持与右侧引线相同的高度
+#                         ]
+#                         pairs_length_middle[4:8] = left_line
+#                         print("根据右侧引线生成左侧引线")
+                    
+#                     # 计算距离
+#                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     # 没有找到任何引线，不保存这个pairs
+#                     print("没有找到任何引线，跳过这个pairs")
+            
+#             # 竖向标尺线的处理类似
+#             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
+#                 print("竖向")
+#                 up_straight = np.zeros((0, 5))
+#                 down_straight = np.zeros((0, 5))
+#                 middle = np.zeros((5))
+                
+#                 for j in range(len(ver_lines_heng)):
+#                     # 上端附近的直线
+#                     if pairs[i][1] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
+#                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
+#                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
+#                                 pairs[i][2] - pairs[i][0]):
+#                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
+#                                     pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
+#                                 middle[0:4] = ver_lines_heng[j]
+#                                 middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
+#                                 up_straight = np.r_[up_straight, [middle]]
+#                                 print("外向竖pairs找到上横线")
+ 
+#                     # 下端附近的直线
+#                     if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
+#                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
+#                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
+#                                 pairs[i][2] - pairs[i][0]):
+#                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
+#                                     pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
+#                                 middle[0:4] = ver_lines_heng[j]
+#                                 middle[4] = abs(pairs[i][0] - ver_lines_heng[j][0])
+#                                 down_straight = np.r_[down_straight, [middle]]
+#                                 print("外向竖pairs找到下横线")
+                
+#                 up_straight = up_straight[np.argsort(up_straight[:, 4])]
+#                 down_straight = down_straight[np.argsort(down_straight[:, 4])]
+                
+#                 # 修改：根据找到的引线数量处理
+#                 if len(up_straight) > 0 and len(down_straight) > 0:
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                     pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                     pairs_length_middle[12] = abs(up_straight[0, 1] - down_straight[0, 1])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print("找到两条引线，直接使用")
+#                 elif len(up_straight) > 0 or len(down_straight) > 0:
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(up_straight) > 0:
+#                         pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                         up_line = up_straight[0, 0:4]
+                        
+#                         up_distance = up_line[1] - pairs[i][1]
+                        
+#                         # 生成下侧引线（与上侧对称）
+#                         down_line = [
+#                             up_line[0],
+#                             pairs[i][3] - abs(up_distance),  # 保持与上侧对称的距离
+#                             up_line[2],
+#                             pairs[i][3] - abs(up_distance)
+#                         ]
+#                         pairs_length_middle[8:12] = down_line
+#                         print("根据上侧引线生成下侧引线")
+                    
+#                     elif len(down_straight) > 0:
+#                         pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                         down_line = down_straight[0, 0:4]
+                        
+#                         down_distance = down_line[1] - pairs[i][3]
+                        
+#                         # 生成上侧引线（与下侧对称）
+#                         up_line = [
+#                             down_line[0],
+#                             pairs[i][1] + abs(down_distance),  # 保持与下侧对称的距离
+#                             down_line[2],
+#                             pairs[i][1] + abs(down_distance)
+#                         ]
+#                         pairs_length_middle[4:8] = up_line
+#                         print("根据下侧引线生成上侧引线")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs")
+        
+#         # 内向标尺线的处理（保持原有逻辑）
+#         # 在内向标尺线的处理部分添加对称性逻辑
+#         if pairs[i][4] == 1:  # 内向标尺线
+#             print("内向")
+#             ratio = 0.8
+#             ratio_inside = 0.15
+            
+#             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
+#                 print("横向")
+#                 left_straight = np.zeros((0, 6))  # 改为6列，存储[x1,y1,x2,y2,距离,评分]
+#                 right_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_shu)):
+#                     # 使用简化评分函数为内向箭头也计算评分
+#                     # 左端附近的直线
+#                     if pairs[i][0] - ratio_inside * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][0] + ratio * (
+#                             pairs[i][2] - pairs[i][0]):
+#                         # 计算简化评分
+#                         left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                        
+#                         if left_score > 0:  # 使用评分而不是原始条件
+#                             middle[0:4] = ver_lines_shu[j]
+#                             middle[4] = abs(pairs[i][0] - ver_lines_shu[j][0])
+#                             middle[5] = left_score  # 存储评分
+#                             left_straight = np.r_[left_straight, [middle]]
+#                             print(f"内向横pairs找到左竖线，距离: {middle[4]}, 评分: {left_score}")
+ 
+#                     # 右端附近的直线
+#                     if pairs[i][2] - ratio * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][2] + ratio_inside * (pairs[i][2] - pairs[i][0]):
+#                         # 计算简化评分
+#                         right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                        
+#                         if right_score > 0:  # 使用评分而不是原始条件
+#                             middle[0:4] = ver_lines_shu[j]
+#                             middle[4] = abs(pairs[i][2] - ver_lines_shu[j][0])
+#                             middle[5] = right_score  # 存储评分
+#                             right_straight = np.r_[right_straight, [middle]]
+#                             print(f"内向横pairs找到右竖线，距离: {middle[4]}, 评分: {right_score}")
+                
+#                 # 关键修改：寻找最对称的引线对
+#                 if len(left_straight) > 0 and len(right_straight) > 0:
+#                     best_left_idx = 0
+#                     best_right_idx = 0
+#                     best_symmetry_score = float('inf')
+#                     best_combined_score = 0
+                    
+#                     # 限制搜索范围，取评分最高的前几个候选
+#                     left_candidates = left_straight[np.argsort(-left_straight[:, 5])[:3]]  # 取评分最高的3个
+#                     right_candidates = right_straight[np.argsort(-right_straight[:, 5])[:3]]  # 取评分最高的3个
+                    
+#                     for li, left_line in enumerate(left_candidates):
+#                         for ri, right_line in enumerate(right_candidates):
+#                             # 计算对称性：左右引线到各自箭头的距离应该接近
+#                             left_distance = left_line[0] - pairs[i][0]  # 左引线到左箭头的距离
+#                             right_distance = pairs[i][2] - right_line[0]  # 右箭头到右引线的距离
+                            
+#                             # 对称性评分：距离差的绝对值越小越好
+#                             symmetry = abs(abs(left_distance) - abs(right_distance))
+                            
+#                             # 综合评分：对称性 + 单个引线的评分
+#                             combined_score = (left_line[5] + right_line[5]) * 0.5 - symmetry * 2
+                            
+#                             if combined_score > best_combined_score:
+#                                 best_combined_score = combined_score
+#                                 best_left_idx = li
+#                                 best_right_idx = ri
+#                                 best_symmetry_score = symmetry
+                    
+#                     print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                    
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = left_candidates[best_left_idx, 0:4]
+#                     pairs_length_middle[8:12] = right_candidates[best_right_idx, 0:4]
+#                     pairs_length_middle[12] = abs(left_candidates[best_left_idx, 0] - right_candidates[best_right_idx, 0])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print("找到两条引线，使用对称性最佳的配对")
+                    
+#                 elif len(left_straight) > 0 or len(right_straight) > 0:
+#                     # 只有一侧找到引线的处理（保持原有逻辑）
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(left_straight) > 0:
+#                         # 按综合评分排序：距离和评分的加权
+#                         left_straight = left_straight[np.argsort(-left_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                         left_line = left_straight[0, 0:4]
+                        
+#                         left_distance = left_line[0] - pairs[i][0]
+                        
+#                         # 生成右侧引线（保持对称）
+#                         right_line = [
+#                             pairs[i][2] - abs(left_distance),
+#                             left_line[1],
+#                             pairs[i][2] - abs(left_distance),
+#                             left_line[3]
+#                         ]
+#                         pairs_length_middle[8:12] = right_line
+#                         print("根据左侧引线生成右侧引线（内向）")
+                    
+#                     elif len(right_straight) > 0:
+#                         # 按综合评分排序
+#                         right_straight = right_straight[np.argsort(-right_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                         right_line = right_straight[0, 0:4]
+                        
+#                         right_distance = pairs[i][2] - right_line[0]
+                        
+#                         # 生成左侧引线（保持对称）
+#                         left_line = [
+#                             pairs[i][0] + abs(right_distance),
+#                             right_line[1],
+#                             pairs[i][0] + abs(right_distance),
+#                             right_line[3]
+#                         ]
+#                         pairs_length_middle[4:8] = left_line
+#                         print("根据右侧引线生成左侧引线（内向）")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs（内向）")
+#             #####
+#             # 在竖向标尺线的处理部分也加入对称性逻辑
+#             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
+#                 print("竖向")
+#                 up_straight = np.zeros((0, 6))  # 改为6列，存储[x1,y1,x2,y2,距离,评分]
+#                 down_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_heng)):
+#                     # 使用评分函数计算上端引线
+#                     # 上端附近的直线
+#                     if pairs[i][1] - ratio_inside * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         print(">>> 进入上横线Y坐标条件")
+#                         print(ver_lines_heng[j])
+#                         # 创建临时竖直线表示，用于评分计算
+#                         # 对于竖直方向的箭头，我们需要转换为水平引线的评分
+#                         # 使用类似逻辑但方向不同
+#                         up_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=True)
+                        
+                        
+#                         if up_score > 0:
+#                             middle[0:4] = ver_lines_heng[j]
+#                             middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
+#                             middle[5] = up_score  # 存储评分
+#                             up_straight = np.r_[up_straight, [middle]]
+#                             print(f"内向竖pairs找到上横线，距离: {middle[4]}, 评分: {up_score}")
+ 
+#                     # 下端附近的直线
+#                     if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio_inside * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         print(">>> 进入下横线Y坐标条件")
+#                         print(ver_lines_heng[j])
+#                         # 创建临时竖直线表示，用于评分计算
+#                         down_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=False)
+                        
+#                         if down_score > 0:
+#                             middle[0:4] = ver_lines_heng[j]
+#                             middle[4] = abs(pairs[i][3] - ver_lines_heng[j][1])
+#                             middle[5] = down_score  # 存储评分
+#                             down_straight = np.r_[down_straight, [middle]]
+#                             print(f"内向竖pairs找到下横线，距离: {middle[4]}, 评分: {down_score}")
+                
+#                 # 关键修改：寻找最对称的引线对
+#                 if len(up_straight) > 0 and len(down_straight) > 0:
+#                     best_up_idx = 0
+#                     best_down_idx = 0
+#                     best_symmetry_score = float('inf')
+#                     best_combined_score = 0
+                    
+#                     # 限制搜索范围，取评分最高的前几个候选
+#                     up_candidates = up_straight[np.argsort(-up_straight[:, 5])[:3]]  # 取评分最高的3个
+#                     down_candidates = down_straight[np.argsort(-down_straight[:, 5])[:3]]  # 取评分最高的3个
+                    
+#                     for ui, up_line in enumerate(up_candidates):
+#                         for di, down_line in enumerate(down_candidates):
+#                             # 计算对称性：上下引线到各自箭头的距离应该接近
+#                             up_distance = up_line[1] - pairs[i][1]  # 上引线到上箭头的距离
+#                             down_distance = pairs[i][3] - down_line[1]  # 下箭头到下引线的距离
+                            
+#                             # 对称性评分：距离差的绝对值越小越好
+#                             symmetry = abs(abs(up_distance) - abs(down_distance))
+                            
+#                             # 综合评分：对称性 + 单个引线的评分
+#                             combined_score = (up_line[5] + down_line[5]) * 0.5 - symmetry * 2
+                            
+#                             if combined_score > best_combined_score:
+#                                 best_combined_score = combined_score
+#                                 best_up_idx = ui
+#                                 best_down_idx = di
+#                                 best_symmetry_score = symmetry
+                    
+#                     print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                    
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = up_candidates[best_up_idx, 0:4]
+#                     pairs_length_middle[8:12] = down_candidates[best_down_idx, 0:4]
+#                     pairs_length_middle[12] = abs(up_candidates[best_up_idx, 1] - down_candidates[best_down_idx, 1])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print("找到两条引线，使用对称性最佳的配对")
+                    
+#                 elif len(up_straight) > 0 or len(down_straight) > 0:
+#                     # 只有一侧找到引线的处理
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(up_straight) > 0:
+#                         # 按综合评分排序：距离和评分的加权
+#                         up_straight = up_straight[np.argsort(-up_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                         up_line = up_straight[0, 0:4]
+                        
+#                         up_distance = up_line[1] - pairs[i][1]
+                        
+#                         # 生成下侧引线（保持对称）
+#                         down_line = [
+#                             up_line[0],
+#                             pairs[i][3] - abs(up_distance),
+#                             up_line[2],
+#                             pairs[i][3] - abs(up_distance)
+#                         ]
+#                         pairs_length_middle[8:12] = down_line
+#                         print("根据上侧引线生成下侧引线（内向）")
+                    
+#                     elif len(down_straight) > 0:
+#                         # 按综合评分排序
+#                         down_straight = down_straight[np.argsort(-down_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                         down_line = down_straight[0, 0:4]
+                        
+#                         down_distance = pairs[i][3] - down_line[1]
+                        
+#                         # 生成上侧引线（保持对称）
+#                         up_line = [
+#                             down_line[0],
+#                             pairs[i][1] + abs(down_distance),
+#                             down_line[2],
+#                             pairs[i][1] + abs(down_distance)
+#                         ]
+#                         pairs_length_middle[4:8] = up_line
+#                         print("根据下侧引线生成上侧引线（内向）")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs（内向）")
+        
+#         print("一组pairs结束*")
+    
+#     # 可视化部分保持不变
+#     if test_mode == 1:
+#         drawn_img = cv2.imread(img_path)
+#         for i in range(len(pairs_length)):
+#             x1 = int(pairs_length[i][4])
+#             x2 = int(pairs_length[i][6])
+#             y1 = int(pairs_length[i][5])
+#             y2 = int(pairs_length[i][7])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#             x1 = int(pairs_length[i][8])
+#             x2 = int(pairs_length[i][10])
+#             y1 = int(pairs_length[i][9])
+#             y2 = int(pairs_length[i][11])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#         for i in range(len(pairs_length)):
+#             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
+#             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
+#             point_color = (0, 0, 255)
+#             thickness = 2
+#             lineType = 8
+#             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+#         cv2.namedWindow("LSD", 0)
+#         cv2.imshow("LSD", drawn_img)
+#         cv2.waitKey(0)
+#         cv2.destroyAllWindows()
+#         print("视图结束**")
+    
+#     try:
+#         drawn_img = cv2.imread(img_path)
+#         for i in range(len(pairs_length)):
+#             x1 = int(pairs_length[i][4])
+#             x2 = int(pairs_length[i][6])
+#             y1 = int(pairs_length[i][5])
+#             y2 = int(pairs_length[i][7])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#             x1 = int(pairs_length[i][8])
+#             x2 = int(pairs_length[i][10])
+#             y1 = int(pairs_length[i][9])
+#             y2 = int(pairs_length[i][11])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#         for i in range(len(pairs_length)):
+#             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
+#             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
+#             point_color = (0, 0, 255)
+#             thickness = 2
+#             lineType = 8
+#             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+#         path = fr'{OPENCV_OUTPUT_LINE}/' + img_path[-7:]
+#         cv2.imwrite(path, drawn_img)
+#         print("保存引线+标尺线组合成功:", path)
+#     except:
+#         print("保存引线+标尺线组合失败")
+    
+#     print("***/结束引线和标尺线的匹配/***")
+#     pairs_length = remove_duplicate_pairs(pairs_length)
+#     pairs_length = remove_contained_arrows(pairs_length)
+#     return pairs_length
+
+######################代码较优############################3
+
+# def find_pairs_length(img_path, pairs, test_mode):
+#     '''
+#     功能：检测标尺线附近成对的引线
+#     pairs np.二维数组[x1,y1,x2,y2,0 = outside 1 = inside]
+#     img_path str
+#     '''
+#     print("***/开始引线和标尺线的匹配/***")
+#     # 1.根据pinmap所在位置推测出大概十字线坐标
+#     pin_map_limation = get_np_array_in_txt(f'{YOLO_DATA}/pin_map_limation.txt')
+#     w, h = get_img_info(img_path)
+#     a = np.array(([1, 1, 1, 1]))
+#     if (pin_map_limation != a).all():
+#         heng = (pin_map_limation[0][3] + pin_map_limation[0][1]) * 0.5 / 2
+#         shu = (pin_map_limation[0][2] + pin_map_limation[0][0]) * 0.5 / 2
+#     if img_path == f'{YOLO_DATA}/side.jpg' or img_path == f'{YOLO_DATA}/top.jpg':
+#         heng = h / 2
+#         shu = w / 2
+ 
+#     ver_lines_heng, ver_lines_shu = find_all_lines(img_path, test_mode)
+#     # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_heng.txt")
+#     # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_shu.txt")
+#     pairs_length = np.zeros((0, 13))  # 存储pairs以及所表示的距离
+#     pairs_length_middle = np.zeros(13)
+ 
+#     # 横向直线的坐标排列np.二维数组[x1,y1,x2,y2]改为x1<x2 y1<y2
+#     new_ver_lines = np.zeros((0, 4))
+#     for i in range(len(ver_lines_heng)):
+#         if ver_lines_heng[i][0] > ver_lines_heng[i][2]:
+#             c = ver_lines_heng[i][0]
+#             ver_lines_heng[i][0] = ver_lines_heng[i][2]
+#             ver_lines_heng[i][2] = c
+#         if ver_lines_heng[i][1] > ver_lines_heng[i][3]:
+#             c = ver_lines_heng[i][1]
+#             ver_lines_heng[i][1] = ver_lines_heng[i][3]
+#             ver_lines_heng[i][3] = c
+#     # 滤除较短的直线
+#     min_length = 10  # 最短直线长
+#     for i in range(len(ver_lines_heng)):
+#         if max(abs(ver_lines_heng[i][2] - ver_lines_heng[i][0]),
+#                abs(ver_lines_heng[i][3] - ver_lines_heng[i][1])) > min_length:
+#             new_ver_lines = np.r_[new_ver_lines, [ver_lines_heng[i]]]
+#     ver_lines_heng = new_ver_lines
+#     min_length = 20  # 最短直线长
+#     new_ver_lines = np.zeros((0, 4))
+#     ver_lines_shu = np.array(ver_lines_shu)
+#     for i in range(len(ver_lines_shu)):
+#         if max(abs(ver_lines_shu[i][2] - ver_lines_shu[i][0]),
+#                abs(ver_lines_shu[i][3] - ver_lines_shu[i][1])) > min_length:
+#             new_ver_lines = np.r_[new_ver_lines, [ver_lines_shu[i]]]
+#     ver_lines_shu = new_ver_lines
+    
+#     # 新增：计算引线与箭头的匹配评分函数 - 简化版本，主要考虑距离
+#     def calculate_match_score_simple(arrow_pair, line, heng, is_left=True, is_top=None):
+#         """
+#         简化版匹配评分，支持水平和竖直方向
+#         现在支持水平横线作为竖直箭头的引线
+#         """
+#         score = 0
+        
+#         # 判断是水平箭头还是竖直箭头
+#         arrow_width = arrow_pair[2] - arrow_pair[0]
+#         arrow_height = arrow_pair[3] - arrow_pair[1]
+#         is_horizontal = arrow_width > arrow_height
+        
+#         # 判断line是水平还是竖直
+#         line_width = line[2] - line[0]
+#         line_height = line[3] - line[1]
+#         line_is_horizontal = line_width > line_height
+        
+#         if is_horizontal:
+#             # 水平箭头处理 - 期望竖直引线
+#             if line_is_horizontal:
+#                 # 如果line是水平的，不适合作为水平箭头的引线
+#                 return -1000
+                
+#             # 原来的水平箭头处理代码
+#             arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+#             line_y_center = (line[1] + line[3]) / 2
+#             line_y_range = line[3] - line[1]
+#             arrow_y_range = arrow_pair[3] - arrow_pair[1]
+            
+#             # 计算y方向重叠
+#             y_overlap_start = max(arrow_pair[1], line[1])
+#             y_overlap_end = min(arrow_pair[3], line[3])
+#             y_overlap = max(0, y_overlap_end - y_overlap_start)
+            
+#             # 如果完全没有重叠，检查距离是否在可接受范围内
+#             if y_overlap == 0:
+#                 # 计算最近距离
+#                 y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
+#                 if y_distance > 3 * arrow_y_range:  # 距离超过3倍箭头高度
+#                     return -1000  # 完全不匹配
+            
+#             # 2. 水平距离评分 - 这是最重要的因素
+#             if is_left:
+#                 x_distance = abs(line[0] - arrow_pair[0])
+#             else:
+#                 x_distance = abs(line[0] - arrow_pair[2])
+            
+#             # 距离越小分数越高
+#             if x_distance <= 50:
+#                 score = 100 * (1 - x_distance / 50)
+#             else:
+#                 score = max(0, 10 * (1 - x_distance / 100))
+            
+#             # 3. 重叠奖励
+#             if y_overlap > 0:
+#                 overlap_ratio = y_overlap / min(arrow_y_range, line_y_range)
+#                 score += 20 * overlap_ratio
+            
+#             # 4. Y方向中心对齐奖励
+#             center_diff = abs(arrow_y_center - line_y_center)
+#             if center_diff < 30:
+#                 score += 10 * (1 - center_diff / 30)
+            
+#         else:
+#             # 竖直箭头处理 - 期望水平引线
+#             if not line_is_horizontal:
+#                 # 如果line是竖直的，不适合作为竖直箭头的引线
+#                 return -1000
+                
+#             # 现在line是水平横线
+#             line_y = line[1]  # 水平横线的y坐标
+            
+#             # 计算x方向重叠
+#             x_overlap_start = max(arrow_pair[0], line[0])
+#             x_overlap_end = min(arrow_pair[2], line[2])
+#             x_overlap = max(0, x_overlap_end - x_overlap_start)
+            
+#             # 如果完全没有重叠，检查距离是否在可接受范围内
+#             if x_overlap == 0:
+#                 # 计算最近距离
+#                 x_distance = min(abs(arrow_pair[0] - line[2]), abs(arrow_pair[2] - line[0]))
+#                 if x_distance > 3 * arrow_width:  # 距离超过3倍箭头宽度
+#                     return -1000  # 完全不匹配
+            
+#             # 2. 竖直距离评分
+#             if is_top:
+#                 y_distance = abs(line_y - arrow_pair[1])  # 到箭头上端的距离
+#             else:
+#                 y_distance = abs(line_y - arrow_pair[3])  # 到箭头下端的距离
+            
+#             # 距离越小分数越高
+#             if y_distance <= 50:
+#                 score = 100 * (1 - y_distance / 50)
+#             else:
+#                 score = max(0, 10 * (1 - y_distance / 100))
+            
+#             # 3. 重叠奖励
+#             if x_overlap > 0:
+#                 overlap_ratio = x_overlap / min(arrow_width, line_width)
+#                 score += 20 * overlap_ratio
+            
+#             # 4. X方向中心对齐奖励
+#             arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
+#             line_x_center = (line[0] + line[2]) / 2
+#             center_diff = abs(arrow_x_center - line_x_center)
+#             if center_diff < 30:
+#                 score += 10 * (1 - center_diff / 30)
+        
+#         return score
+    
+#     ratio = 0.4
+#     ra = 2
+#     # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\\\ver_lines_heng.txt")
+#     # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\\\ver_lines_shu.txt")
+#     print("开始视图**")
+    
+#     for i in range(len(pairs)):
+#         print("一组pairs开始*")
+#         print(f'开始{pairs[i]}判断')
+#         print(f'横{heng}')
+#         print(f'竖{shu}')
+        
+#         if pairs[i][4] == 0:  # 外向标尺线
+#             print("外向")
+#             ratio = 0.3  # 增加ratio，让搜索范围更大
+            
+#             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
+#                 print("横向")
+#                 left_straight = np.zeros((0, 6))  # 增加一列存储评分
+#                 right_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_shu)):
+#                     # 简化：主要根据水平距离匹配
+#                     left_distance = abs(ver_lines_shu[j][0] - pairs[i][0])
+#                     right_distance = abs(ver_lines_shu[j][0] - pairs[i][2])
+                    
+#                     # 左引线匹配条件
+#                     if left_distance < 50:  # 距离小于50像素
+#                         # 检查Y方向是否有重叠或接近
+#                         y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+#                         y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+#                         y_overlap = max(0, y_overlap_end - y_overlap_start)
+                        
+#                         if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+#                                                 abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
+#                             # 计算简化评分
+#                             left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                            
+#                             if left_score > 0:
+#                                 middle[0:4] = ver_lines_shu[j]
+#                                 middle[4] = left_distance  # 存储距离
+#                                 middle[5] = left_score  # 存储评分
+#                                 left_straight = np.r_[left_straight, [middle]]
+#                                 print(f"外向横pairs找到左竖线，距离: {left_distance}, 评分: {left_score}")
+                    
+#                     # 右引线匹配条件
+#                     if right_distance < 50:  # 距离小于50像素
+#                         # 检查Y方向是否有重叠或接近
+#                         y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+#                         y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+#                         y_overlap = max(0, y_overlap_end - y_overlap_start)
+                        
+#                         if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+#                                                 abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
+#                             # 计算简化评分
+#                             right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                            
+#                             if right_score > 0:
+#                                 middle[0:4] = ver_lines_shu[j]
+#                                 middle[4] = right_distance  # 存储距离
+#                                 middle[5] = right_score  # 存储评分
+#                                 right_straight = np.r_[right_straight, [middle]]
+#                                 print(f"外向横pairs找到右竖线，距离: {right_distance}, 评分: {right_score}")
+                
+#                 # 按距离从小到大排序（主要排序依据），距离相同再按评分排序
+#                 if len(left_straight) > 0:
+#                     # 先按距离排序，距离小的在前
+#                     left_straight = left_straight[np.argsort(left_straight[:, 4])]
+#                     # 如果前几个距离相同，再按评分排序
+#                     # 简单实现：取距离最小的几个，再按评分排序
+#                     min_distance = left_straight[0, 4]
+#                     same_distance_indices = np.where(left_straight[:, 4] <= min_distance + 1)[0]
+#                     if len(same_distance_indices) > 1:
+#                         # 对距离相同的部分按评分排序
+#                         same_distance_lines = left_straight[same_distance_indices]
+#                         same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
+#                         left_straight[same_distance_indices] = same_distance_lines
+                
+#                 if len(right_straight) > 0:
+#                     # 先按距离排序，距离小的在前
+#                     right_straight = right_straight[np.argsort(right_straight[:, 4])]
+#                     # 如果前几个距离相同，再按评分排序
+#                     min_distance = right_straight[0, 4]
+#                     same_distance_indices = np.where(right_straight[:, 4] <= min_distance + 1)[0]
+#                     if len(same_distance_indices) > 1:
+#                         # 对距离相同的部分按评分排序
+#                         same_distance_lines = right_straight[same_distance_indices]
+#                         same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
+#                         right_straight[same_distance_indices] = same_distance_lines
+                
+#                 # 根据找到的引线数量处理
+#                 if len(left_straight) > 0 and len(right_straight) > 0:
+#                     # 找到两条引线，直接使用距离最小的
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                     pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                     pairs_length_middle[12] = abs(left_straight[0, 0] - right_straight[0, 0])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print(f"找到两条引线，左距离: {left_straight[0, 4]}, 右距离: {right_straight[0, 4]}")
+#                 elif len(left_straight) > 0 or len(right_straight) > 0:
+#                     # 只找到一条引线，生成另一条
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     # 如果找到左侧引线
+#                     if len(left_straight) > 0:
+#                         pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                         left_line = left_straight[0, 0:4]
+                        
+#                         # 计算左侧引线与箭头对的距离
+#                         left_distance = left_line[0] - pairs[i][0]
+                        
+#                         # 生成右侧引线（与左侧对称）
+#                         right_line = [
+#                             pairs[i][2] - abs(left_distance),  # 保持与左侧对称的距离
+#                             left_line[1],  # y1 - 保持与左侧引线相同的高度
+#                             pairs[i][2] - abs(left_distance),  # x2 - 保持与左侧对称的距离
+#                             left_line[3]   # y2 - 保持与左侧引线相同的高度
+#                         ]
+#                         pairs_length_middle[8:12] = right_line
+#                         print("根据左侧引线生成右侧引线")
+                    
+#                     # 如果找到右侧引线
+#                     elif len(right_straight) > 0:
+#                         pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                         right_line = right_straight[0, 0:4]
+                        
+#                         # 计算右侧引线与箭头对的距离
+#                         right_distance = right_line[0] - pairs[i][2]
+                        
+#                         # 生成左侧引线（与右侧对称）
+#                         left_line = [
+#                             pairs[i][0] + abs(right_distance),  # 保持与右侧对称的距离
+#                             right_line[1],  # y1 - 保持与右侧引线相同的高度
+#                             pairs[i][0] + abs(right_distance),  # x2 - 保持与右侧对称的距离
+#                             right_line[3]   # y2 - 保持与右侧引线相同的高度
+#                         ]
+#                         pairs_length_middle[4:8] = left_line
+#                         print("根据右侧引线生成左侧引线")
+                    
+#                     # 计算距离
+#                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     # 没有找到任何引线，不保存这个pairs
+#                     print("没有找到任何引线，跳过这个pairs")
+            
+#             # 竖向标尺线的处理类似
+#             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
+#                 print("竖向")
+#                 up_straight = np.zeros((0, 5))
+#                 down_straight = np.zeros((0, 5))
+#                 middle = np.zeros((5))
+                
+#                 for j in range(len(ver_lines_heng)):
+#                     # 上端附近的直线
+#                     if pairs[i][1] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
+#                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
+#                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
+#                                 pairs[i][2] - pairs[i][0]):
+#                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
+#                                     pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
+#                                 middle[0:4] = ver_lines_heng[j]
+#                                 middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
+#                                 up_straight = np.r_[up_straight, [middle]]
+#                                 print("外向竖pairs找到上横线")
+ 
+#                     # 下端附近的直线
+#                     if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
+#                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
+#                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
+#                                 pairs[i][2] - pairs[i][0]):
+#                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
+#                                     pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
+#                                 middle[0:4] = ver_lines_heng[j]
+#                                 middle[4] = abs(pairs[i][0] - ver_lines_heng[j][0])
+#                                 down_straight = np.r_[down_straight, [middle]]
+#                                 print("外向竖pairs找到下横线")
+                
+#                 up_straight = up_straight[np.argsort(up_straight[:, 4])]
+#                 down_straight = down_straight[np.argsort(down_straight[:, 4])]
+                
+#                 # 修改：根据找到的引线数量处理
+#                 if len(up_straight) > 0 and len(down_straight) > 0:
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                     pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                     pairs_length_middle[12] = abs(up_straight[0, 1] - down_straight[0, 1])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print("找到两条引线，直接使用")
+#                 elif len(up_straight) > 0 or len(down_straight) > 0:
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(up_straight) > 0:
+#                         pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                         up_line = up_straight[0, 0:4]
+                        
+#                         up_distance = up_line[1] - pairs[i][1]
+                        
+#                         # 生成下侧引线（与上侧对称）
+#                         down_line = [
+#                             up_line[0],
+#                             pairs[i][3] - abs(up_distance),  # 保持与上侧对称的距离
+#                             up_line[2],
+#                             pairs[i][3] - abs(up_distance)
+#                         ]
+#                         pairs_length_middle[8:12] = down_line
+#                         print("根据上侧引线生成下侧引线")
+                    
+#                     elif len(down_straight) > 0:
+#                         pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                         down_line = down_straight[0, 0:4]
+                        
+#                         down_distance = down_line[1] - pairs[i][3]
+                        
+#                         # 生成上侧引线（与下侧对称）
+#                         up_line = [
+#                             down_line[0],
+#                             pairs[i][1] + abs(down_distance),  # 保持与下侧对称的距离
+#                             down_line[2],
+#                             pairs[i][1] + abs(down_distance)
+#                         ]
+#                         pairs_length_middle[4:8] = up_line
+#                         print("根据下侧引线生成上侧引线")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs")
+        
+#         # 内向标尺线的处理（保持原有逻辑）
+#         # 在内向标尺线的处理部分添加对称性逻辑
+#         if pairs[i][4] == 1:  # 内向标尺线
+#             print("内向")
+#             ratio = 0.8
+#             ratio_inside = 0.15
+            
+#             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
+#                 print("横向")
+#                 left_straight = np.zeros((0, 6))  # 改为6列，存储[x1,y1,x2,y2,距离,评分]
+#                 right_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_shu)):
+#                     # 使用简化评分函数为内向箭头也计算评分
+#                     # 左端附近的直线
+#                     if pairs[i][0] - ratio_inside * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][0] + ratio * (
+#                             pairs[i][2] - pairs[i][0]):
+#                         # 计算简化评分
+#                         left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                        
+#                         if left_score > 0:  # 使用评分而不是原始条件
+#                             middle[0:4] = ver_lines_shu[j]
+#                             middle[4] = abs(pairs[i][0] - ver_lines_shu[j][0])
+#                             middle[5] = left_score  # 存储评分
+#                             left_straight = np.r_[left_straight, [middle]]
+#                             print(f"内向横pairs找到左竖线，距离: {middle[4]}, 评分: {left_score}")
+ 
+#                     # 右端附近的直线
+#                     if pairs[i][2] - ratio * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][2] + ratio_inside * (pairs[i][2] - pairs[i][0]):
+#                         # 计算简化评分
+#                         right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                        
+#                         if right_score > 0:  # 使用评分而不是原始条件
+#                             middle[0:4] = ver_lines_shu[j]
+#                             middle[4] = abs(pairs[i][2] - ver_lines_shu[j][0])
+#                             middle[5] = right_score  # 存储评分
+#                             right_straight = np.r_[right_straight, [middle]]
+#                             print(f"内向横pairs找到右竖线，距离: {middle[4]}, 评分: {right_score}")
+                
+#                 # 关键修改：寻找最对称的引线对
+#                 if len(left_straight) > 0 and len(right_straight) > 0:
+#                     best_left_idx = 0
+#                     best_right_idx = 0
+#                     best_symmetry_score = float('inf')
+#                     best_combined_score = 0
+                    
+#                     # 限制搜索范围，取评分最高的前几个候选
+#                     left_candidates = left_straight[np.argsort(-left_straight[:, 5])[:3]]  # 取评分最高的3个
+#                     right_candidates = right_straight[np.argsort(-right_straight[:, 5])[:3]]  # 取评分最高的3个
+                    
+#                     for li, left_line in enumerate(left_candidates):
+#                         for ri, right_line in enumerate(right_candidates):
+#                             # 计算对称性：左右引线到各自箭头的距离应该接近
+#                             left_distance = left_line[0] - pairs[i][0]  # 左引线到左箭头的距离
+#                             right_distance = pairs[i][2] - right_line[0]  # 右箭头到右引线的距离
+                            
+#                             # 对称性评分：距离差的绝对值越小越好
+#                             symmetry = abs(abs(left_distance) - abs(right_distance))
+                            
+#                             # 综合评分：对称性 + 单个引线的评分
+#                             combined_score = (left_line[5] + right_line[5]) * 0.5 - symmetry * 2
+                            
+#                             if combined_score > best_combined_score:
+#                                 best_combined_score = combined_score
+#                                 best_left_idx = li
+#                                 best_right_idx = ri
+#                                 best_symmetry_score = symmetry
+                    
+#                     print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                    
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = left_candidates[best_left_idx, 0:4]
+#                     pairs_length_middle[8:12] = right_candidates[best_right_idx, 0:4]
+#                     pairs_length_middle[12] = abs(left_candidates[best_left_idx, 0] - right_candidates[best_right_idx, 0])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print("找到两条引线，使用对称性最佳的配对")
+                    
+#                 elif len(left_straight) > 0 or len(right_straight) > 0:
+#                     # 只有一侧找到引线的处理（保持原有逻辑）
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(left_straight) > 0:
+#                         # 按综合评分排序：距离和评分的加权
+#                         left_straight = left_straight[np.argsort(-left_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                         left_line = left_straight[0, 0:4]
+                        
+#                         left_distance = left_line[0] - pairs[i][0]
+                        
+#                         # 生成右侧引线（保持对称）
+#                         right_line = [
+#                             pairs[i][2] - abs(left_distance),
+#                             left_line[1],
+#                             pairs[i][2] - abs(left_distance),
+#                             left_line[3]
+#                         ]
+#                         pairs_length_middle[8:12] = right_line
+#                         print("根据左侧引线生成右侧引线（内向）")
+                    
+#                     elif len(right_straight) > 0:
+#                         # 按综合评分排序
+#                         right_straight = right_straight[np.argsort(-right_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                         right_line = right_straight[0, 0:4]
+                        
+#                         right_distance = pairs[i][2] - right_line[0]
+                        
+#                         # 生成左侧引线（保持对称）
+#                         left_line = [
+#                             pairs[i][0] + abs(right_distance),
+#                             right_line[1],
+#                             pairs[i][0] + abs(right_distance),
+#                             right_line[3]
+#                         ]
+#                         pairs_length_middle[4:8] = left_line
+#                         print("根据右侧引线生成左侧引线（内向）")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs（内向）")
+#             #####
+#             # 在竖向标尺线的处理部分也加入对称性逻辑
+#             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
+#                 print("竖向")
+#                 up_straight = np.zeros((0, 6))  # 改为6列，存储[x1,y1,x2,y2,距离,评分]
+#                 down_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_heng)):
+#                     # 使用评分函数计算上端引线
+#                     # 上端附近的直线
+#                     if pairs[i][1] - ratio_inside * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         print(">>> 进入上横线Y坐标条件")
+#                         print(ver_lines_heng[j])
+#                         # 创建临时竖直线表示，用于评分计算
+#                         # 对于竖直方向的箭头，我们需要转换为水平引线的评分
+#                         # 使用类似逻辑但方向不同
+#                         up_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=True)
+                        
+                        
+#                         if up_score > 0:
+#                             middle[0:4] = ver_lines_heng[j]
+#                             middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
+#                             middle[5] = up_score  # 存储评分
+#                             up_straight = np.r_[up_straight, [middle]]
+#                             print(f"内向竖pairs找到上横线，距离: {middle[4]}, 评分: {up_score}")
+ 
+#                     # 下端附近的直线
+#                     if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio_inside * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         print(">>> 进入下横线Y坐标条件")
+#                         print(ver_lines_heng[j])
+#                         # 创建临时竖直线表示，用于评分计算
+#                         down_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=False)
+                        
+#                         if down_score > 0:
+#                             middle[0:4] = ver_lines_heng[j]
+#                             middle[4] = abs(pairs[i][3] - ver_lines_heng[j][1])
+#                             middle[5] = down_score  # 存储评分
+#                             down_straight = np.r_[down_straight, [middle]]
+#                             print(f"内向竖pairs找到下横线，距离: {middle[4]}, 评分: {down_score}")
+                
+#                 # 关键修改：寻找最对称的引线对
+#                 if len(up_straight) > 0 and len(down_straight) > 0:
+#                     # 检查是否可能是同一根线
+#                     same_line_detected = False
+                    
+#                     # 检查是否有完全相同的线在up_straight和down_straight中
+#                     for up_line in up_straight:
+#                         for down_line in down_straight:
+#                             if np.array_equal(up_line[0:4], down_line[0:4]):
+#                                 same_line_detected = True
+#                                 print("检测到同一根线被同时当作上引线和下引线")
+#                                 break
+#                         if same_line_detected:
+#                             break
+                    
+#                     if same_line_detected:
+#                         # 如果是同一根线，按照只有一侧有引线处理
+#                         print("检测到同一根线，按单侧引线处理")
+                        
+#                         # 选择评分更高的一侧
+#                         if up_straight[0][5] > down_straight[0][5]:
+#                             # 使用上引线
+#                             pairs_length_middle[0:4] = pairs[i, 0:4]
+#                             pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                             up_line = up_straight[0, 0:4]
+                            
+#                             up_distance = up_line[1] - pairs[i][1]
+                            
+#                             # 生成下侧引线（保持对称）
+#                             down_line = [
+#                                 up_line[0],
+#                                 pairs[i][3] - abs(up_distance),
+#                                 up_line[2],
+#                                 pairs[i][3] - abs(up_distance)
+#                             ]
+#                             pairs_length_middle[8:12] = down_line
+#                             print("使用上引线，生成下引线（对称生成）")
+#                         else:
+#                             # 使用下引线
+#                             pairs_length_middle[0:4] = pairs[i, 0:4]
+#                             pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                             down_line = down_straight[0, 0:4]
+                            
+#                             down_distance = pairs[i][3] - down_line[1]
+                            
+#                             # 生成上侧引线（保持对称）
+#                             up_line = [
+#                                 down_line[0],
+#                                 pairs[i][1] + abs(down_distance),
+#                                 down_line[2],
+#                                 pairs[i][1] + abs(down_distance)
+#                             ]
+#                             pairs_length_middle[4:8] = up_line
+#                             print("使用下引线，生成上引线（对称生成）")
+                        
+#                         pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     else:
+#                         # 原有的对称性匹配逻辑
+#                         best_up_idx = 0
+#                         best_down_idx = 0
+#                         best_symmetry_score = float('inf')
+#                         best_combined_score = 0
+                        
+#                         # 限制搜索范围，取评分最高的前几个候选
+#                         up_candidates = up_straight[np.argsort(-up_straight[:, 5])[:3]]
+#                         down_candidates = down_straight[np.argsort(-down_straight[:, 5])[:3]]
+                        
+#                         for ui, up_line in enumerate(up_candidates):
+#                             for di, down_line in enumerate(down_candidates):
+#                                 # 计算对称性：上下引线到各自箭头的距离应该接近
+#                                 up_distance = up_line[1] - pairs[i][1]
+#                                 down_distance = pairs[i][3] - down_line[1]
+                                
+#                                 # 对称性评分：距离差的绝对值越小越好
+#                                 symmetry = abs(abs(up_distance) - abs(down_distance))
+                                
+#                                 # 综合评分：对称性 + 单个引线的评分
+#                                 combined_score = (up_line[5] + down_line[5]) * 0.5 - symmetry * 2
+                                
+#                                 if combined_score > best_combined_score:
+#                                     best_combined_score = combined_score
+#                                     best_up_idx = ui
+#                                     best_down_idx = di
+#                                     best_symmetry_score = symmetry
+                        
+#                         print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                        
+#                         pairs_length_middle[0:4] = pairs[i, 0:4]
+#                         pairs_length_middle[4:8] = up_candidates[best_up_idx, 0:4]
+#                         pairs_length_middle[8:12] = down_candidates[best_down_idx, 0:4]
+#                         pairs_length_middle[12] = abs(up_candidates[best_up_idx, 1] - down_candidates[best_down_idx, 1])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                         print("找到两条不同的引线，使用对称性最佳的配对")
+
+#                 elif len(up_straight) > 0 or len(down_straight) > 0:
+#                     # 只有一侧找到引线的处理（保持不变）
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(up_straight) > 0:
+#                         # 按综合评分排序：距离和评分的加权
+#                         up_straight = up_straight[np.argsort(-up_straight[:, 5])]
+#                         pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                         up_line = up_straight[0, 0:4]
+                        
+#                         up_distance = up_line[1] - pairs[i][1]
+                        
+#                         # 生成下侧引线（保持对称）
+#                         down_line = [
+#                             up_line[0],
+#                             pairs[i][3] - abs(up_distance),
+#                             up_line[2],
+#                             pairs[i][3] - abs(up_distance)
+#                         ]
+#                         pairs_length_middle[8:12] = down_line
+#                         print("根据上侧引线生成下侧引线（单侧引线）")
+                    
+#                     elif len(down_straight) > 0:
+#                         # 按综合评分排序
+#                         down_straight = down_straight[np.argsort(-down_straight[:, 5])]
+#                         pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                         down_line = down_straight[0, 0:4]
+                        
+#                         down_distance = pairs[i][3] - down_line[1]
+                        
+#                         # 生成上侧引线（保持对称）
+#                         up_line = [
+#                             down_line[0],
+#                             pairs[i][1] + abs(down_distance),
+#                             down_line[2],
+#                             pairs[i][1] + abs(down_distance)
+#                         ]
+#                         pairs_length_middle[4:8] = up_line
+#                         print("根据下侧引线生成上侧引线（单侧引线）")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs（内向）")
+        
+#         print("一组pairs结束*")
+    
+#     # 可视化部分保持不变
+#     if test_mode == 1:
+#         drawn_img = cv2.imread(img_path)
+#         for i in range(len(pairs_length)):
+#             x1 = int(pairs_length[i][4])
+#             x2 = int(pairs_length[i][6])
+#             y1 = int(pairs_length[i][5])
+#             y2 = int(pairs_length[i][7])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#             x1 = int(pairs_length[i][8])
+#             x2 = int(pairs_length[i][10])
+#             y1 = int(pairs_length[i][9])
+#             y2 = int(pairs_length[i][11])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#         for i in range(len(pairs_length)):
+#             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
+#             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
+#             point_color = (0, 0, 255)
+#             thickness = 2
+#             lineType = 8
+#             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+#         cv2.namedWindow("LSD", 0)
+#         cv2.imshow("LSD", drawn_img)
+#         cv2.waitKey(0)
+#         cv2.destroyAllWindows()
+#         print("视图结束**")
+    
+#     try:
+#         drawn_img = cv2.imread(img_path)
+#         for i in range(len(pairs_length)):
+#             x1 = int(pairs_length[i][4])
+#             x2 = int(pairs_length[i][6])
+#             y1 = int(pairs_length[i][5])
+#             y2 = int(pairs_length[i][7])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#             x1 = int(pairs_length[i][8])
+#             x2 = int(pairs_length[i][10])
+#             y1 = int(pairs_length[i][9])
+#             y2 = int(pairs_length[i][11])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#         for i in range(len(pairs_length)):
+#             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
+#             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
+#             point_color = (0, 0, 255)
+#             thickness = 2
+#             lineType = 8
+#             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+#         path = fr'{OPENCV_OUTPUT_LINE}/' + img_path[-7:]
+#         cv2.imwrite(path, drawn_img)
+#         print("保存引线+标尺线组合成功:", path)
+#     except:
+#         print("保存引线+标尺线组合失败")
+    
+#     print("***/结束引线和标尺线的匹配/***")
+#     pairs_length = remove_duplicate_pairs(pairs_length)
+#     pairs_length = remove_contained_arrows(pairs_length)
+#     return pairs_length
+
+##########################继续调试####################
+#########目前最优版本，请勿修改任何部分代码！！！！！！！！！！！！！#######
+# def find_pairs_length(img_path, pairs, test_mode):
+#     '''
+#     功能：检测标尺线附近成对的引线
+#     pairs np.二维数组[x1,y1,x2,y2,0 = outside 1 = inside]
+#     img_path str
+#     '''
+#     print("***/开始引线和标尺线的匹配/***")
+#     # 1.根据pinmap所在位置推测出大概十字线坐标
+#     pin_map_limation = get_np_array_in_txt(f'{YOLO_DATA}/pin_map_limation.txt')
+#     w, h = get_img_info(img_path)
+#     a = np.array(([1, 1, 1, 1]))
+#     if (pin_map_limation != a).all():
+#         heng = (pin_map_limation[0][3] + pin_map_limation[0][1]) * 0.5 / 2
+#         shu = (pin_map_limation[0][2] + pin_map_limation[0][0]) * 0.5 / 2
+#     if img_path == f'{YOLO_DATA}/side.jpg' or img_path == f'{YOLO_DATA}/top.jpg':
+#         heng = h / 2
+#         shu = w / 2
+ 
+#     ver_lines_heng, ver_lines_shu = find_all_lines(img_path, test_mode)
+#     # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_heng.txt")
+#     # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_shu.txt")
+#     pairs_length = np.zeros((0, 13))  # 存储pairs以及所表示的距离
+#     pairs_length_middle = np.zeros(13)
+ 
+#     # 横向直线的坐标排列np.二维数组[x1,y1,x2,y2]改为x1<x2 y1<y2
+#     new_ver_lines = np.zeros((0, 4))
+#     for i in range(len(ver_lines_heng)):
+#         if ver_lines_heng[i][0] > ver_lines_heng[i][2]:
+#             c = ver_lines_heng[i][0]
+#             ver_lines_heng[i][0] = ver_lines_heng[i][2]
+#             ver_lines_heng[i][2] = c
+#         if ver_lines_heng[i][1] > ver_lines_heng[i][3]:
+#             c = ver_lines_heng[i][1]
+#             ver_lines_heng[i][1] = ver_lines_heng[i][3]
+#             ver_lines_heng[i][3] = c
+#     # 滤除较短的直线
+#     min_length = 10  # 最短直线长
+#     for i in range(len(ver_lines_heng)):
+#         if max(abs(ver_lines_heng[i][2] - ver_lines_heng[i][0]),
+#                abs(ver_lines_heng[i][3] - ver_lines_heng[i][1])) > min_length:
+#             new_ver_lines = np.r_[new_ver_lines, [ver_lines_heng[i]]]
+#     ver_lines_heng = new_ver_lines
+#     min_length = 20  # 最短直线长
+#     new_ver_lines = np.zeros((0, 4))
+#     ver_lines_shu = np.array(ver_lines_shu)
+#     for i in range(len(ver_lines_shu)):
+#         if max(abs(ver_lines_shu[i][2] - ver_lines_shu[i][0]),
+#                abs(ver_lines_shu[i][3] - ver_lines_shu[i][1])) > min_length:
+#             new_ver_lines = np.r_[new_ver_lines, [ver_lines_shu[i]]]
+#     ver_lines_shu = new_ver_lines
+    
+#     # 新增：计算引线与箭头的匹配评分函数 - 简化版本，主要考虑距离
+#     def calculate_match_score_simple(arrow_pair, line, heng, is_left=True, is_top=None):
+#         """
+#         简化版匹配评分，支持水平和竖直方向
+#         箭头方向通过arrow_pair[4]判断：0 = outside（外向），1 = inside（内向）
+#         """
+#         score = 0
+        
+#         # 判断是水平箭头还是竖直箭头
+#         arrow_width = arrow_pair[2] - arrow_pair[0]
+#         arrow_height = arrow_pair[3] - arrow_pair[1]
+#         is_horizontal = arrow_width > arrow_height
+        
+#         # 判断line是水平还是竖直
+#         line_width = line[2] - line[0]
+#         line_height = line[3] - line[1]
+#         line_is_horizontal = line_width > line_height
+        
+#         # 获取箭头方向
+#         arrow_direction = arrow_pair[4]  # 0 = 外向, 1 = 内向
+        
+#         if is_horizontal:
+#             # 水平箭头处理 - 期望竖直引线
+#             if line_is_horizontal:
+#                 return -1000
+                
+#             # 获取箭头关键坐标
+#             arrow_left = arrow_pair[0]
+#             arrow_right = arrow_pair[2]
+#             arrow_center_x = (arrow_left + arrow_right) / 2
+#             line_x = line[0]  # 竖直线段的x坐标
+            
+#             # 计算y方向重叠
+#             y_overlap_start = max(arrow_pair[1], line[1])
+#             y_overlap_end = min(arrow_pair[3], line[3])
+#             y_overlap = max(0, y_overlap_end - y_overlap_start)
+            
+#             # 如果完全没有重叠，检查距离是否在可接受范围内
+#             if y_overlap == 0:
+#                 y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
+#                 if y_distance > 3 * arrow_height:
+#                     return -1000
+            
+#             # 判断引线是否在箭头x范围内（水平方向）
+#             is_inside_arrow = arrow_left <= line_x <= arrow_right
+            
+#             # 根据箭头方向采用不同的评分策略
+#             if arrow_direction == 1:  # 内向箭头
+#                 # 内向水平箭头：优先选择箭头内部对称的引线
+#                 if is_inside_arrow:
+#                     # 在箭头内部 - 这是理想情况
+                    
+#                     # 计算距离中心的距离
+#                     center_distance = abs(line_x - arrow_center_x)
+#                     center_distance_ratio = center_distance / (arrow_width / 2)
+                    
+#                     # 距离中心越近分数越高
+#                     if center_distance_ratio <= 1.0:
+#                         score = 100 * (1 - center_distance_ratio)
+#                     else:
+#                         # 虽然在内部但超过半宽，分数降低
+#                         score = 50 * (1 - center_distance_ratio)
+                    
+#                     # 额外奖励：非常接近中点
+#                     if center_distance < arrow_width * 0.1:
+#                         score += 40
+#                     elif center_distance < arrow_width * 0.25:
+#                         score += 20
+                        
+#                     # 额外奖励：垂直方向对齐良好
+#                     arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+#                     line_y_center = (line[1] + line[3]) / 2
+#                     if abs(arrow_y_center - line_y_center) < arrow_height * 0.3:
+#                         score += 20
+#                 else:
+#                     # 不在箭头内部 - 这是次要选择
+#                     edge_distance = min(abs(line_x - arrow_left), abs(line_x - arrow_right))
+#                     edge_distance_ratio = edge_distance / arrow_width
+                    
+#                     if edge_distance_ratio <= 1.0:
+#                         score = 60 * (1 - edge_distance_ratio)
+#                     else:
+#                         score = max(0, 30 * (1 - edge_distance_ratio))
+                    
+#                     # 外部引线惩罚
+#                     score *= 0.7
+                    
+#             else:  # 外向箭头
+#                 # 外向水平箭头：只需要找箭头附近最近的引线
+#                 distance_to_left = abs(line_x - arrow_left)
+#                 distance_to_right = abs(line_x - arrow_right)
+#                 min_distance = min(distance_to_left, distance_to_right)
+                
+#                 distance_ratio = min_distance / arrow_width
+                
+#                 # 距离越近越好
+#                 if distance_ratio <= 1.0:
+#                     score = 100 * (1 - distance_ratio)
+#                 elif distance_ratio <= 2.0:
+#                     score = 70 * (1 - (distance_ratio - 1.0))
+#                 else:
+#                     score = max(0, 30 * (1 - distance_ratio / 3))
+                
+#                 # 如果指定了方向（左/右），检查是否符合
+#                 if is_left is not None:
+#                     if is_left:
+#                         # 期望引线在箭头左侧
+#                         if line_x < arrow_left:
+#                             score += 15
+#                         elif line_x > arrow_right:
+#                             score *= 0.8
+#                     else:
+#                         # 期望引线在箭头右侧
+#                         if line_x > arrow_right:
+#                             score += 15
+#                         elif line_x < arrow_left:
+#                             score *= 0.8
+            
+#             # 重叠奖励
+#             if y_overlap > 0:
+#                 overlap_ratio = y_overlap / min(arrow_height, line_height)
+#                 score += 20 * overlap_ratio
+#             else:
+#                 if y_overlap == 0:
+#                     y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
+#                     if y_distance < arrow_height:
+#                         score += 10 * (1 - y_distance / arrow_height)
+            
+#             # Y方向中心对齐奖励
+#             arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+#             line_y_center = (line[1] + line[3]) / 2
+#             center_diff_y = abs(arrow_y_center - line_y_center)
+#             if center_diff_y < arrow_height:
+#                 score += 10 * (1 - center_diff_y / arrow_height)
+            
+#         else:
+#             # 竖直箭头处理 - 期望水平引线
+#             if not line_is_horizontal:
+#                 return -1000
+                
+#             # 现在line是水平横线
+#             line_y = line[1]  # 水平横线的y坐标
+#             arrow_top = arrow_pair[1]
+#             arrow_bottom = arrow_pair[3]
+#             arrow_center_y = (arrow_top + arrow_bottom) / 2
+            
+#             # 计算x方向重叠
+#             x_overlap_start = max(arrow_pair[0], line[0])
+#             x_overlap_end = min(arrow_pair[2], line[2])
+#             x_overlap = max(0, x_overlap_end - x_overlap_start)
+            
+#             # 如果完全没有重叠，检查距离是否在可接受范围内
+#             if x_overlap == 0:
+#                 x_distance = min(abs(arrow_pair[0] - line[2]), abs(arrow_pair[2] - line[0]))
+#                 if x_distance > 3 * arrow_width:
+#                     return -1000
+            
+#             # 判断引线是否在箭头y范围内
+#             is_inside_arrow = arrow_top <= line_y <= arrow_bottom
+            
+#             # 根据箭头方向采用不同的评分策略
+#             if arrow_direction == 1:  # 内向箭头
+#                 # 内向竖直箭头：优先选择箭头内部对称的引线
+#                 if is_inside_arrow:
+#                     # 在箭头内部 - 这是理想情况
+                    
+#                     # 计算距离中心的距离
+#                     center_distance = abs(line_y - arrow_center_y)
+#                     center_distance_ratio = center_distance / (arrow_height / 2)
+                    
+#                     # 距离中心越近分数越高
+#                     if center_distance_ratio <= 1.0:
+#                         score = 100 * (1 - center_distance_ratio)
+#                     else:
+#                         # 虽然在内部但超过半高，分数降低
+#                         score = 50 * (1 - center_distance_ratio)
+                    
+#                     # 额外奖励：非常接近中点
+#                     if center_distance < arrow_height * 0.1:
+#                         score += 40
+#                     elif center_distance < arrow_height * 0.25:
+#                         score += 20
+                        
+#                     # 额外奖励：水平方向对齐良好
+#                     arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
+#                     line_x_center = (line[0] + line[2]) / 2
+#                     if abs(arrow_x_center - line_x_center) < arrow_width * 0.3:
+#                         score += 20
+#                 else:
+#                     # 不在箭头内部 - 这是次要选择
+#                     edge_distance = min(abs(line_y - arrow_top), abs(line_y - arrow_bottom))
+#                     edge_distance_ratio = edge_distance / arrow_height
+                    
+#                     if edge_distance_ratio <= 1.0:
+#                         score = 60 * (1 - edge_distance_ratio)
+#                     else:
+#                         score = max(0, 30 * (1 - edge_distance_ratio))
+                    
+#                     # 外部引线惩罚
+#                     score *= 0.7
+                    
+#             else:  # 外向箭头
+#                 # 外向竖直箭头：只需要找箭头附近最近的引线
+#                 distance_to_top = abs(line_y - arrow_top)
+#                 distance_to_bottom = abs(line_y - arrow_bottom)
+#                 min_distance = min(distance_to_top, distance_to_bottom)
+                
+#                 distance_ratio = min_distance / arrow_height
+                
+#                 # 距离越近越好
+#                 if distance_ratio <= 1.0:
+#                     score = 100 * (1 - distance_ratio)
+#                 elif distance_ratio <= 2.0:
+#                     score = 70 * (1 - (distance_ratio - 1.0))
+#                 else:
+#                     score = max(0, 30 * (1 - distance_ratio / 3))
+                
+#                 # 如果指定了方向（上/下），检查是否符合
+#                 if is_top is not None:
+#                     if is_top:
+#                         # 期望上横线
+#                         if line_y < arrow_top:
+#                             score += 15
+#                         elif line_y > arrow_bottom:
+#                             score *= 0.8
+#                     else:
+#                         # 期望下横线
+#                         if line_y > arrow_bottom:
+#                             score += 15
+#                         elif line_y < arrow_top:
+#                             score *= 0.8
+            
+#             # 重叠奖励
+#             if x_overlap > 0:
+#                 overlap_ratio = x_overlap / min(arrow_width, line_width)
+#                 score += 20 * overlap_ratio
+#             else:
+#                 if x_overlap == 0:
+#                     x_distance = min(abs(arrow_pair[0] - line[2]), abs(arrow_pair[2] - line[0]))
+#                     if x_distance < arrow_width:
+#                         score += 10 * (1 - x_distance / arrow_width)
+            
+#             # X方向中心对齐奖励
+#             arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
+#             line_x_center = (line[0] + line[2]) / 2
+#             center_diff_x = abs(arrow_x_center - line_x_center)
+#             if center_diff_x < arrow_width:
+#                 score += 10 * (1 - center_diff_x / arrow_width)
+        
+#         # 引线长度合理性检查
+#         line_length = max(line_width, line_height)
+#         if is_horizontal:
+#             arrow_length = arrow_width
+#         else:
+#             arrow_length = arrow_height
+        
+#         length_ratio = line_length / max(arrow_length, 1)
+#         if 0.5 <= length_ratio <= 3.0:
+#             score += 10
+#         elif length_ratio > 5.0:
+#             score *= 0.8
+        
+#         # 确保分数不为负
+#         return max(0, score)
+    
+#     ratio = 0.4
+#     ra = 2
+#     # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\\\ver_lines_heng.txt")
+#     # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\\\ver_lines_shu.txt")
+#     print("开始视图**")
+    
+#     for i in range(len(pairs)):
+#         print("一组pairs开始*")
+#         print(f'开始{pairs[i]}判断')
+#         print(f'横{heng}')
+#         print(f'竖{shu}')
+        
+#         if pairs[i][4] == 0:  # 外向标尺线
+#             print("外向")
+#             ratio = 0.3  # 增加ratio，让搜索范围更大
+            
+#             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
+#                 print("横向")
+#                 left_straight = np.zeros((0, 6))  # 增加一列存储评分
+#                 right_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_shu)):
+#                     # 简化：主要根据水平距离匹配
+#                     left_distance = abs(ver_lines_shu[j][0] - pairs[i][0])
+#                     right_distance = abs(ver_lines_shu[j][0] - pairs[i][2])
+                    
+#                     # 左引线匹配条件
+#                     if left_distance < 50:  # 距离小于50像素
+#                         # 检查Y方向是否有重叠或接近
+#                         y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+#                         y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+#                         y_overlap = max(0, y_overlap_end - y_overlap_start)
+                        
+#                         if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+#                                                 abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
+#                             # 计算简化评分
+#                             left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                            
+#                             if left_score > 0:
+#                                 middle[0:4] = ver_lines_shu[j]
+#                                 middle[4] = left_distance  # 存储距离
+#                                 middle[5] = left_score  # 存储评分
+#                                 left_straight = np.r_[left_straight, [middle]]
+#                                 print(f"外向横pairs找到左竖线，距离: {left_distance}, 评分: {left_score}")
+                    
+#                     # 右引线匹配条件
+#                     if right_distance < 50:  # 距离小于50像素
+#                         # 检查Y方向是否有重叠或接近
+#                         y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+#                         y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+#                         y_overlap = max(0, y_overlap_end - y_overlap_start)
+                        
+#                         if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+#                                                 abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
+#                             # 计算简化评分
+#                             right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                            
+#                             if right_score > 0:
+#                                 middle[0:4] = ver_lines_shu[j]
+#                                 middle[4] = right_distance  # 存储距离
+#                                 middle[5] = right_score  # 存储评分
+#                                 right_straight = np.r_[right_straight, [middle]]
+#                                 print(f"外向横pairs找到右竖线，距离: {right_distance}, 评分: {right_score}")
+                
+#                 # 按距离从小到大排序（主要排序依据），距离相同再按评分排序
+#                 if len(left_straight) > 0:
+#                     # 先按距离排序，距离小的在前
+#                     left_straight = left_straight[np.argsort(left_straight[:, 4])]
+#                     # 如果前几个距离相同，再按评分排序
+#                     # 简单实现：取距离最小的几个，再按评分排序
+#                     min_distance = left_straight[0, 4]
+#                     same_distance_indices = np.where(left_straight[:, 4] <= min_distance + 1)[0]
+#                     if len(same_distance_indices) > 1:
+#                         # 对距离相同的部分按评分排序
+#                         same_distance_lines = left_straight[same_distance_indices]
+#                         same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
+#                         left_straight[same_distance_indices] = same_distance_lines
+                
+#                 if len(right_straight) > 0:
+#                     # 先按距离排序，距离小的在前
+#                     right_straight = right_straight[np.argsort(right_straight[:, 4])]
+#                     # 如果前几个距离相同，再按评分排序
+#                     min_distance = right_straight[0, 4]
+#                     same_distance_indices = np.where(right_straight[:, 4] <= min_distance + 1)[0]
+#                     if len(same_distance_indices) > 1:
+#                         # 对距离相同的部分按评分排序
+#                         same_distance_lines = right_straight[same_distance_indices]
+#                         same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
+#                         right_straight[same_distance_indices] = same_distance_lines
+                
+#                 # 根据找到的引线数量处理
+#                 if len(left_straight) > 0 and len(right_straight) > 0:
+#                     # 找到两条引线，直接使用距离最小的
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                     pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                     pairs_length_middle[12] = abs(left_straight[0, 0] - right_straight[0, 0])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print(f"找到两条引线，左距离: {left_straight[0, 4]}, 右距离: {right_straight[0, 4]}")
+#                 elif len(left_straight) > 0 or len(right_straight) > 0:
+#                     # 只找到一条引线，生成另一条
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     # 如果找到左侧引线
+#                     if len(left_straight) > 0:
+#                         pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                         left_line = left_straight[0, 0:4]
+                        
+#                         # 计算左侧引线与箭头对的距离
+#                         left_distance = left_line[0] - pairs[i][0]
+                        
+#                         # 生成右侧引线（与左侧对称）
+#                         right_line = [
+#                             pairs[i][2] - abs(left_distance),  # 保持与左侧对称的距离
+#                             left_line[1],  # y1 - 保持与左侧引线相同的高度
+#                             pairs[i][2] - abs(left_distance),  # x2 - 保持与左侧对称的距离
+#                             left_line[3]   # y2 - 保持与左侧引线相同的高度
+#                         ]
+#                         pairs_length_middle[8:12] = right_line
+#                         print("根据左侧引线生成右侧引线")
+                    
+#                     # 如果找到右侧引线
+#                     elif len(right_straight) > 0:
+#                         pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                         right_line = right_straight[0, 0:4]
+                        
+#                         # 计算右侧引线与箭头对的距离
+#                         right_distance = right_line[0] - pairs[i][2]
+                        
+#                         # 生成左侧引线（与右侧对称）
+#                         left_line = [
+#                             pairs[i][0] + abs(right_distance),  # 保持与右侧对称的距离
+#                             right_line[1],  # y1 - 保持与右侧引线相同的高度
+#                             pairs[i][0] + abs(right_distance),  # x2 - 保持与右侧对称的距离
+#                             right_line[3]   # y2 - 保持与右侧引线相同的高度
+#                         ]
+#                         pairs_length_middle[4:8] = left_line
+#                         print("根据右侧引线生成左侧引线")
+                    
+#                     # 计算距离
+#                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     # 没有找到任何引线，不保存这个pairs
+#                     print("没有找到任何引线，跳过这个pairs")
+            
+#             # 竖向标尺线的处理类似
+#             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
+#                 print("竖向")
+#                 up_straight = np.zeros((0, 5))
+#                 down_straight = np.zeros((0, 5))
+#                 middle = np.zeros((5))
+                
+#                 for j in range(len(ver_lines_heng)):
+#                     # 上端附近的直线
+#                     if pairs[i][1] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
+#                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
+#                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
+#                                 pairs[i][2] - pairs[i][0]):
+#                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
+#                                     pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
+#                                 middle[0:4] = ver_lines_heng[j]
+#                                 middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
+#                                 up_straight = np.r_[up_straight, [middle]]
+#                                 print("外向竖pairs找到上横线")
+ 
+#                     # 下端附近的直线
+#                     if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
+#                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
+#                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
+#                                 pairs[i][2] - pairs[i][0]):
+#                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
+#                                     pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
+#                                 middle[0:4] = ver_lines_heng[j]
+#                                 middle[4] = abs(pairs[i][0] - ver_lines_heng[j][0])
+#                                 down_straight = np.r_[down_straight, [middle]]
+#                                 print("外向竖pairs找到下横线")
+                
+#                 up_straight = up_straight[np.argsort(up_straight[:, 4])]
+#                 down_straight = down_straight[np.argsort(down_straight[:, 4])]
+                
+#                 # 修改：根据找到的引线数量处理
+#                 if len(up_straight) > 0 and len(down_straight) > 0:
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                     pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                     pairs_length_middle[12] = abs(up_straight[0, 1] - down_straight[0, 1])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print("找到两条引线，直接使用")
+#                 elif len(up_straight) > 0 or len(down_straight) > 0:
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(up_straight) > 0:
+#                         pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                         up_line = up_straight[0, 0:4]
+                        
+#                         up_distance = up_line[1] - pairs[i][1]
+                        
+#                         # 生成下侧引线（与上侧对称）
+#                         down_line = [
+#                             up_line[0],
+#                             pairs[i][3] - abs(up_distance),  # 保持与上侧对称的距离
+#                             up_line[2],
+#                             pairs[i][3] - abs(up_distance)
+#                         ]
+#                         pairs_length_middle[8:12] = down_line
+#                         print("根据上侧引线生成下侧引线")
+                    
+#                     elif len(down_straight) > 0:
+#                         pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                         down_line = down_straight[0, 0:4]
+                        
+#                         down_distance = down_line[1] - pairs[i][3]
+                        
+#                         # 生成上侧引线（与下侧对称）
+#                         up_line = [
+#                             down_line[0],
+#                             pairs[i][1] + abs(down_distance),  # 保持与下侧对称的距离
+#                             down_line[2],
+#                             pairs[i][1] + abs(down_distance)
+#                         ]
+#                         pairs_length_middle[4:8] = up_line
+#                         print("根据下侧引线生成上侧引线")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs")
+        
+#         # 内向标尺线的处理（保持原有逻辑）
+#         # 在内向标尺线的处理部分添加对称性逻辑
+#         if pairs[i][4] == 1:  # 内向标尺线
+#             print("内向")
+#             ratio = 0.8
+#             ratio_inside = 0.15
+            
+#             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
+#                 print("横向")
+#                 left_straight = np.zeros((0, 6))  # 改为6列，存储[x1,y1,x2,y2,距离,评分]
+#                 right_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_shu)):
+#                     # 使用简化评分函数为内向箭头也计算评分
+#                     # 左端附近的直线
+#                     if pairs[i][0] - ratio_inside * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][0] + ratio * (
+#                             pairs[i][2] - pairs[i][0]):
+#                         # 计算简化评分
+#                         left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                        
+#                         if left_score > 0:  # 使用评分而不是原始条件
+#                             middle[0:4] = ver_lines_shu[j]
+#                             middle[4] = abs(pairs[i][0] - ver_lines_shu[j][0])
+#                             middle[5] = left_score  # 存储评分
+#                             left_straight = np.r_[left_straight, [middle]]
+#                             print(f"内向横pairs找到左竖线，距离: {middle[4]}, 评分: {left_score}")
+ 
+#                     # 右端附近的直线
+#                     if pairs[i][2] - ratio * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][2] + ratio_inside * (pairs[i][2] - pairs[i][0]):
+#                         # 计算简化评分
+#                         right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                        
+#                         if right_score > 0:  # 使用评分而不是原始条件
+#                             middle[0:4] = ver_lines_shu[j]
+#                             middle[4] = abs(pairs[i][2] - ver_lines_shu[j][0])
+#                             middle[5] = right_score  # 存储评分
+#                             right_straight = np.r_[right_straight, [middle]]
+#                             print(f"内向横pairs找到右竖线，距离: {middle[4]}, 评分: {right_score}")
+                
+#                 # 关键修改：寻找最对称的引线对
+#                 if len(left_straight) > 0 and len(right_straight) > 0:
+#                     best_left_idx = 0
+#                     best_right_idx = 0
+#                     best_symmetry_score = float('inf')
+#                     best_combined_score = 0
+                    
+#                     # 限制搜索范围，取评分最高的前几个候选
+#                     left_candidates = left_straight[np.argsort(-left_straight[:, 5])[:3]]  # 取评分最高的3个
+#                     right_candidates = right_straight[np.argsort(-right_straight[:, 5])[:3]]  # 取评分最高的3个
+                    
+#                     for li, left_line in enumerate(left_candidates):
+#                         for ri, right_line in enumerate(right_candidates):
+#                             # 计算对称性：左右引线到各自箭头的距离应该接近
+#                             left_distance = left_line[0] - pairs[i][0]  # 左引线到左箭头的距离
+#                             right_distance = pairs[i][2] - right_line[0]  # 右箭头到右引线的距离
+                            
+#                             # 对称性评分：距离差的绝对值越小越好
+#                             symmetry = abs(abs(left_distance) - abs(right_distance))
+                            
+#                             # 综合评分：对称性 + 单个引线的评分
+#                             combined_score = (left_line[5] + right_line[5]) * 0.5 - symmetry * 2
+                            
+#                             if combined_score > best_combined_score:
+#                                 best_combined_score = combined_score
+#                                 best_left_idx = li
+#                                 best_right_idx = ri
+#                                 best_symmetry_score = symmetry
+                    
+#                     print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                    
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = left_candidates[best_left_idx, 0:4]
+#                     pairs_length_middle[8:12] = right_candidates[best_right_idx, 0:4]
+#                     pairs_length_middle[12] = abs(left_candidates[best_left_idx, 0] - right_candidates[best_right_idx, 0])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print("找到两条引线，使用对称性最佳的配对")
+                    
+#                 elif len(left_straight) > 0 or len(right_straight) > 0:
+#                     # 只有一侧找到引线的处理（保持原有逻辑）
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(left_straight) > 0:
+#                         # 按综合评分排序：距离和评分的加权
+#                         left_straight = left_straight[np.argsort(-left_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                         left_line = left_straight[0, 0:4]
+                        
+#                         left_distance = left_line[0] - pairs[i][0]
+                        
+#                         # 生成右侧引线（保持对称）
+#                         right_line = [
+#                             pairs[i][2] - abs(left_distance),
+#                             left_line[1],
+#                             pairs[i][2] - abs(left_distance),
+#                             left_line[3]
+#                         ]
+#                         pairs_length_middle[8:12] = right_line
+#                         print("根据左侧引线生成右侧引线（内向）")
+                    
+#                     elif len(right_straight) > 0:
+#                         # 按综合评分排序
+#                         right_straight = right_straight[np.argsort(-right_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                         right_line = right_straight[0, 0:4]
+                        
+#                         right_distance = pairs[i][2] - right_line[0]
+                        
+#                         # 生成左侧引线（保持对称）
+#                         left_line = [
+#                             pairs[i][0] + abs(right_distance),
+#                             right_line[1],
+#                             pairs[i][0] + abs(right_distance),
+#                             right_line[3]
+#                         ]
+#                         pairs_length_middle[4:8] = left_line
+#                         print("根据右侧引线生成左侧引线（内向）")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs（内向）")
+#             #####
+#             # 在竖向标尺线的处理部分也加入对称性逻辑
+#             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
+#                 print("竖向")
+#                 up_straight = np.zeros((0, 6))  # 改为6列，存储[x1,y1,x2,y2,距离,评分]
+#                 down_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_heng)):
+#                     # 使用评分函数计算上端引线
+#                     # 上端附近的直线
+#                     if pairs[i][1] - ratio_inside * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         print(">>> 进入上横线Y坐标条件")
+#                         print(ver_lines_heng[j])
+#                         # 创建临时竖直线表示，用于评分计算
+#                         # 对于竖直方向的箭头，我们需要转换为水平引线的评分
+#                         # 使用类似逻辑但方向不同
+#                         up_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=True)
+                        
+                        
+#                         if up_score > 0:
+#                             middle[0:4] = ver_lines_heng[j]
+#                             middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
+#                             middle[5] = up_score  # 存储评分
+#                             up_straight = np.r_[up_straight, [middle]]
+#                             print(f"内向竖pairs找到上横线，距离: {middle[4]}, 评分: {up_score}")
+ 
+#                     # 下端附近的直线
+#                     if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio_inside * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         print(">>> 进入下横线Y坐标条件")
+#                         print(ver_lines_heng[j])
+#                         # 创建临时竖直线表示，用于评分计算
+#                         down_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=False)
+                        
+#                         if down_score > 0:
+#                             middle[0:4] = ver_lines_heng[j]
+#                             middle[4] = abs(pairs[i][3] - ver_lines_heng[j][1])
+#                             middle[5] = down_score  # 存储评分
+#                             down_straight = np.r_[down_straight, [middle]]
+#                             print(f"内向竖pairs找到下横线，距离: {middle[4]}, 评分: {down_score}")
+                
+#                 # 关键修改：寻找最对称的引线对
+#                 if len(up_straight) > 0 and len(down_straight) > 0:
+#                     # 检查是否可能是同一根线
+#                     same_line_detected = False
+                    
+#                     # 检查是否有完全相同的线在up_straight和down_straight中
+#                     for up_line in up_straight:
+#                         for down_line in down_straight:
+#                             if np.array_equal(up_line[0:4], down_line[0:4]):
+#                                 same_line_detected = True
+#                                 print("检测到同一根线被同时当作上引线和下引线")
+#                                 break
+#                         if same_line_detected:
+#                             break
+                    
+#                     if same_line_detected:
+#                         # 如果是同一根线，按照只有一侧有引线处理
+#                         print("检测到同一根线，按单侧引线处理")
+                        
+#                         # 选择评分更高的一侧
+#                         if up_straight[0][5] > down_straight[0][5]:
+#                             # 使用上引线
+#                             pairs_length_middle[0:4] = pairs[i, 0:4]
+#                             pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                             up_line = up_straight[0, 0:4]
+                            
+#                             up_distance = up_line[1] - pairs[i][1]
+                            
+#                             # 生成下侧引线（保持对称）
+#                             down_line = [
+#                                 up_line[0],
+#                                 pairs[i][3] - abs(up_distance),
+#                                 up_line[2],
+#                                 pairs[i][3] - abs(up_distance)
+#                             ]
+#                             pairs_length_middle[8:12] = down_line
+#                             print("使用上引线，生成下引线（对称生成）")
+#                         else:
+#                             # 使用下引线
+#                             pairs_length_middle[0:4] = pairs[i, 0:4]
+#                             pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                             down_line = down_straight[0, 0:4]
+                            
+#                             down_distance = pairs[i][3] - down_line[1]
+                            
+#                             # 生成上侧引线（保持对称）
+#                             up_line = [
+#                                 down_line[0],
+#                                 pairs[i][1] + abs(down_distance),
+#                                 down_line[2],
+#                                 pairs[i][1] + abs(down_distance)
+#                             ]
+#                             pairs_length_middle[4:8] = up_line
+#                             print("使用下引线，生成上引线（对称生成）")
+                        
+#                         pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     else:
+#                         # 原有的对称性匹配逻辑
+#                         best_up_idx = 0
+#                         best_down_idx = 0
+#                         best_symmetry_score = float('inf')
+#                         best_combined_score = 0
+                        
+#                         # 限制搜索范围，取评分最高的前几个候选
+#                         up_candidates = up_straight[np.argsort(-up_straight[:, 5])[:3]]
+#                         down_candidates = down_straight[np.argsort(-down_straight[:, 5])[:3]]
+                        
+#                         for ui, up_line in enumerate(up_candidates):
+#                             for di, down_line in enumerate(down_candidates):
+#                                 # 计算对称性：上下引线到各自箭头的距离应该接近
+#                                 up_distance = up_line[1] - pairs[i][1]
+#                                 down_distance = pairs[i][3] - down_line[1]
+                                
+#                                 # 对称性评分：距离差的绝对值越小越好
+#                                 symmetry = abs(abs(up_distance) - abs(down_distance))
+                                
+#                                 # 综合评分：对称性 + 单个引线的评分
+#                                 combined_score = (up_line[5] + down_line[5]) * 0.5 - symmetry * 2
+                                
+#                                 if combined_score > best_combined_score:
+#                                     best_combined_score = combined_score
+#                                     best_up_idx = ui
+#                                     best_down_idx = di
+#                                     best_symmetry_score = symmetry
+                        
+#                         print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                        
+#                         pairs_length_middle[0:4] = pairs[i, 0:4]
+#                         pairs_length_middle[4:8] = up_candidates[best_up_idx, 0:4]
+#                         pairs_length_middle[8:12] = down_candidates[best_down_idx, 0:4]
+#                         pairs_length_middle[12] = abs(up_candidates[best_up_idx, 1] - down_candidates[best_down_idx, 1])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                         print("找到两条不同的引线，使用对称性最佳的配对")
+
+#                 elif len(up_straight) > 0 or len(down_straight) > 0:
+#                     # 只有一侧找到引线的处理（保持不变）
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(up_straight) > 0:
+#                         # 按综合评分排序：距离和评分的加权
+#                         up_straight = up_straight[np.argsort(-up_straight[:, 5])]
+#                         pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                         up_line = up_straight[0, 0:4]
+                        
+#                         up_distance = up_line[1] - pairs[i][1]
+                        
+#                         # 生成下侧引线（保持对称）
+#                         down_line = [
+#                             up_line[0],
+#                             pairs[i][3] - abs(up_distance),
+#                             up_line[2],
+#                             pairs[i][3] - abs(up_distance)
+#                         ]
+#                         pairs_length_middle[8:12] = down_line
+#                         print("根据上侧引线生成下侧引线（单侧引线）")
+                    
+#                     elif len(down_straight) > 0:
+#                         # 按综合评分排序
+#                         down_straight = down_straight[np.argsort(-down_straight[:, 5])]
+#                         pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                         down_line = down_straight[0, 0:4]
+                        
+#                         down_distance = pairs[i][3] - down_line[1]
+                        
+#                         # 生成上侧引线（保持对称）
+#                         up_line = [
+#                             down_line[0],
+#                             pairs[i][1] + abs(down_distance),
+#                             down_line[2],
+#                             pairs[i][1] + abs(down_distance)
+#                         ]
+#                         pairs_length_middle[4:8] = up_line
+#                         print("根据下侧引线生成上侧引线（单侧引线）")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs（内向）")
+        
+#         print("一组pairs结束*")
+    
+#     # 可视化部分保持不变
+#     if test_mode == 1:
+#         drawn_img = cv2.imread(img_path)
+#         for i in range(len(pairs_length)):
+#             x1 = int(pairs_length[i][4])
+#             x2 = int(pairs_length[i][6])
+#             y1 = int(pairs_length[i][5])
+#             y2 = int(pairs_length[i][7])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#             x1 = int(pairs_length[i][8])
+#             x2 = int(pairs_length[i][10])
+#             y1 = int(pairs_length[i][9])
+#             y2 = int(pairs_length[i][11])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#         for i in range(len(pairs_length)):
+#             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
+#             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
+#             point_color = (0, 0, 255)
+#             thickness = 2
+#             lineType = 8
+#             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+#         cv2.namedWindow("LSD", 0)
+#         cv2.imshow("LSD", drawn_img)
+#         cv2.waitKey(0)
+#         cv2.destroyAllWindows()
+#         print("视图结束**")
+    
+#     try:
+#         drawn_img = cv2.imread(img_path)
+#         for i in range(len(pairs_length)):
+#             x1 = int(pairs_length[i][4])
+#             x2 = int(pairs_length[i][6])
+#             y1 = int(pairs_length[i][5])
+#             y2 = int(pairs_length[i][7])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#             x1 = int(pairs_length[i][8])
+#             x2 = int(pairs_length[i][10])
+#             y1 = int(pairs_length[i][9])
+#             y2 = int(pairs_length[i][11])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#         for i in range(len(pairs_length)):
+#             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
+#             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
+#             point_color = (0, 0, 255)
+#             thickness = 2
+#             lineType = 8
+#             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+#         path = fr'{OPENCV_OUTPUT_LINE}/' + img_path[-7:]
+#         cv2.imwrite(path, drawn_img)
+#         print("保存引线+标尺线组合成功:", path)
+#     except:
+#         print("保存引线+标尺线组合失败")
+    
+#     print("***/结束引线和标尺线的匹配/***")
+#     pairs_length = remove_duplicate_pairs(pairs_length)
+#     pairs_length = remove_contained_arrows(pairs_length)
+#     return pairs_length
+
+###################继续调试##############################
+# def find_pairs_length(img_path, pairs, test_mode):
+#     '''
+#     功能：检测标尺线附近成对的引线
+#     pairs np.二维数组[x1,y1,x2,y2,0 = outside 1 = inside]
+#     img_path str
+#     '''
+#     print("***/开始引线和标尺线的匹配/***")
+#     # 1.根据pinmap所在位置推测出大概十字线坐标
+#     pin_map_limation = get_np_array_in_txt(f'{YOLO_DATA}/pin_map_limation.txt')
+#     w, h = get_img_info(img_path)
+#     a = np.array(([1, 1, 1, 1]))
+#     if (pin_map_limation != a).all():
+#         heng = (pin_map_limation[0][3] + pin_map_limation[0][1]) * 0.5 / 2
+#         shu = (pin_map_limation[0][2] + pin_map_limation[0][0]) * 0.5 / 2
+#     if img_path == f'{YOLO_DATA}/side.jpg' or img_path == f'{YOLO_DATA}/top.jpg':
+#         heng = h / 2
+#         shu = w / 2
+ 
+#     ver_lines_heng, ver_lines_shu = find_all_lines(img_path, test_mode)
+#     # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_heng.txt")
+#     # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_shu.txt")
+#     pairs_length = np.zeros((0, 13))  # 存储pairs以及所表示的距离
+#     pairs_length_middle = np.zeros(13)
+ 
+#     # 横向直线的坐标排列np.二维数组[x1,y1,x2,y2]改为x1<x2 y1<y2
+#     new_ver_lines = np.zeros((0, 4))
+#     for i in range(len(ver_lines_heng)):
+#         if ver_lines_heng[i][0] > ver_lines_heng[i][2]:
+#             c = ver_lines_heng[i][0]
+#             ver_lines_heng[i][0] = ver_lines_heng[i][2]
+#             ver_lines_heng[i][2] = c
+#         if ver_lines_heng[i][1] > ver_lines_heng[i][3]:
+#             c = ver_lines_heng[i][1]
+#             ver_lines_heng[i][1] = ver_lines_heng[i][3]
+#             ver_lines_heng[i][3] = c
+#     # 滤除较短的直线
+#     min_length = 10  # 最短直线长
+#     for i in range(len(ver_lines_heng)):
+#         if max(abs(ver_lines_heng[i][2] - ver_lines_heng[i][0]),
+#                abs(ver_lines_heng[i][3] - ver_lines_heng[i][1])) > min_length:
+#             new_ver_lines = np.r_[new_ver_lines, [ver_lines_heng[i]]]
+#     ver_lines_heng = new_ver_lines
+#     min_length = 20  # 最短直线长
+#     new_ver_lines = np.zeros((0, 4))
+#     ver_lines_shu = np.array(ver_lines_shu)
+#     for i in range(len(ver_lines_shu)):
+#         if max(abs(ver_lines_shu[i][2] - ver_lines_shu[i][0]),
+#                abs(ver_lines_shu[i][3] - ver_lines_shu[i][1])) > min_length:
+#             new_ver_lines = np.r_[new_ver_lines, [ver_lines_shu[i]]]
+#     ver_lines_shu = new_ver_lines
+    
+#     # 新增：计算引线与箭头的匹配评分函数 - 简化版本，主要考虑距离
+#     def calculate_match_score_simple(arrow_pair, line, heng, is_left=True, is_top=None):
+#         """
+#         简化版匹配评分，支持水平和竖直方向
+#         箭头方向通过arrow_pair[4]判断：0 = outside（外向），1 = inside（内向）
+#         """
+#         score = 0
+        
+#         # 判断是水平箭头还是竖直箭头
+#         arrow_width = arrow_pair[2] - arrow_pair[0]
+#         arrow_height = arrow_pair[3] - arrow_pair[1]
+#         is_horizontal = arrow_width > arrow_height
+        
+#         # 判断line是水平还是竖直
+#         line_width = line[2] - line[0]
+#         line_height = line[3] - line[1]
+#         line_is_horizontal = line_width > line_height
+        
+#         # 获取箭头方向
+#         arrow_direction = arrow_pair[4]  # 0 = 外向, 1 = 内向
+        
+#         if is_horizontal:
+#             # 水平箭头处理 - 期望竖直引线
+#             if line_is_horizontal:
+#                 return -1000
+                
+#             # 获取箭头关键坐标
+#             arrow_left = arrow_pair[0]
+#             arrow_right = arrow_pair[2]
+#             arrow_center_x = (arrow_left + arrow_right) / 2
+#             line_x = line[0]  # 竖直线段的x坐标
+            
+#             # 计算y方向重叠
+#             y_overlap_start = max(arrow_pair[1], line[1])
+#             y_overlap_end = min(arrow_pair[3], line[3])
+#             y_overlap = max(0, y_overlap_end - y_overlap_start)
+            
+#             # ============ 关键修改1：增加y方向重叠检查 ============
+#             # 对于内向箭头，y方向必须有足够的重叠
+#             if arrow_direction == 1:  # 内向箭头
+#                 if y_overlap < 5:  # 至少5像素重叠
+#                     return -1000
+                
+#                 # 计算重叠比例
+#                 overlap_ratio_y = y_overlap / max(arrow_height, 1)
+                
+#                 # 如果重叠比例太小，直接拒绝
+#                 if overlap_ratio_y < 0.2:  # 至少20%重叠
+#                     return -1000
+            
+#             # 如果完全没有重叠，检查距离是否在可接受范围内
+#             if y_overlap == 0:
+#                 y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
+#                 if y_distance > 3 * arrow_height:
+#                     return -1000
+            
+#             # 判断引线是否在箭头x范围内（水平方向）
+#             is_inside_arrow = arrow_left <= line_x <= arrow_right
+            
+#             # 根据箭头方向采用不同的评分策略
+#             if arrow_direction == 1:  # 内向箭头
+#                 # 内向水平箭头：优先选择箭头内部对称的引线
+#                 if is_inside_arrow:
+#                     # 在箭头内部 - 这是理想情况
+                    
+#                     # 计算距离中心的距离
+#                     center_distance = abs(line_x - arrow_center_x)
+#                     center_distance_ratio = center_distance / (arrow_width / 2)
+                    
+#                     # 距离中心越近分数越高
+#                     if center_distance_ratio <= 1.0:
+#                         base_score = 100 * (1 - center_distance_ratio)
+#                     else:
+#                         # 虽然在内部但超过半宽，分数降低
+#                         base_score = 50 * (1 - center_distance_ratio)
+                    
+#                     # ============ 关键修改2：增加y方向重叠奖励 ============
+#                     # 重叠奖励（重要！）
+#                     overlap_bonus_y = 50 * (y_overlap / max(arrow_height, 1))
+                    
+#                     score = base_score + overlap_bonus_y
+                    
+#                     # 额外奖励：非常接近中点
+#                     if center_distance < arrow_width * 0.1:
+#                         score += 40
+#                     elif center_distance < arrow_width * 0.25:
+#                         score += 20
+                        
+#                     # 额外奖励：垂直方向对齐良好
+#                     arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+#                     line_y_center = (line[1] + line[3]) / 2
+#                     if abs(arrow_y_center - line_y_center) < arrow_height * 0.3:
+#                         score += 20
+                        
+#                     # ============ 关键修改3：惩罚重叠不足的情况 ============
+#                     if y_overlap / max(arrow_height, 1) < 0.5:  # 重叠小于50%
+#                         score *= (0.5 + y_overlap / max(arrow_height, 1))  # 0.5-1.0的系数
+                        
+#                 else:
+#                     # 不在箭头内部 - 这是次要选择
+#                     edge_distance = min(abs(line_x - arrow_left), abs(line_x - arrow_right))
+#                     edge_distance_ratio = edge_distance / arrow_width
+                    
+#                     if edge_distance_ratio <= 1.0:
+#                         base_score = 60 * (1 - edge_distance_ratio)
+#                     else:
+#                         base_score = max(0, 30 * (1 - edge_distance_ratio))
+                    
+#                     # 重叠奖励
+#                     overlap_bonus_y = 30 * (y_overlap / max(arrow_height, 1))
+                    
+#                     score = base_score + overlap_bonus_y
+                    
+#                     # 外部引线惩罚
+#                     score *= 0.7
+                    
+#             else:  # 外向箭头
+#                 # 外向水平箭头：只需要找箭头附近最近的引线
+#                 distance_to_left = abs(line_x - arrow_left)
+#                 distance_to_right = abs(line_x - arrow_right)
+#                 min_distance = min(distance_to_left, distance_to_right)
+                
+#                 distance_ratio = min_distance / arrow_width
+                
+#                 # 距离越近越好
+#                 if distance_ratio <= 1.0:
+#                     base_score = 100 * (1 - distance_ratio)
+#                 elif distance_ratio <= 2.0:
+#                     base_score = 70 * (1 - (distance_ratio - 1.0))
+#                 else:
+#                     base_score = max(0, 30 * (1 - distance_ratio / 3))
+                
+#                 # 重叠奖励
+#                 overlap_bonus_y = 20 * (y_overlap / max(arrow_height, 1))
+                
+#                 score = base_score + overlap_bonus_y
+                
+#                 # 如果指定了方向（左/右），检查是否符合
+#                 if is_left is not None:
+#                     if is_left:
+#                         # 期望引线在箭头左侧
+#                         if line_x < arrow_left:
+#                             score += 15
+#                         elif line_x > arrow_right:
+#                             score *= 0.8
+#                     else:
+#                         # 期望引线在箭头右侧
+#                         if line_x > arrow_right:
+#                             score += 15
+#                         elif line_x < arrow_left:
+#                             score *= 0.8
+            
+#             # ============ 关键修改4：重新设计重叠奖励 ============
+#             # y方向重叠奖励
+#             if y_overlap > 0:
+#                 # 计算重叠比例
+#                 overlap_ratio_y = y_overlap / min(arrow_height, line_height)
+                
+#                 # 根据重叠比例给予奖励
+#                 if overlap_ratio_y >= 0.7:
+#                     score += 40
+#                 elif overlap_ratio_y >= 0.5:
+#                     score += 25
+#                 elif overlap_ratio_y >= 0.3:
+#                     score += 15
+#                 else:
+#                     score += 5
+#             else:
+#                 if y_overlap == 0:
+#                     y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
+#                     if y_distance < arrow_height:
+#                         score += 10 * (1 - y_distance / arrow_height)
+            
+#             # Y方向中心对齐奖励
+#             arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+#             line_y_center = (line[1] + line[3]) / 2
+#             center_diff_y = abs(arrow_y_center - line_y_center)
+#             if center_diff_y < arrow_height:
+#                 score += 10 * (1 - center_diff_y / arrow_height)
+            
+#         else:
+#             # 竖直箭头处理 - 期望水平引线
+#             if not line_is_horizontal:
+#                 return -1000
+                
+#             # 现在line是水平横线
+#             line_y = line[1]  # 水平横线的y坐标
+#             arrow_top = arrow_pair[1]
+#             arrow_bottom = arrow_pair[3]
+#             arrow_center_y = (arrow_top + arrow_bottom) / 2
+            
+#             # 计算x方向重叠
+#             x_overlap_start = max(arrow_pair[0], line[0])
+#             x_overlap_end = min(arrow_pair[2], line[2])
+#             x_overlap = max(0, x_overlap_end - x_overlap_start)
+            
+#             # ============ 关键修改5：增加x方向重叠检查 ============
+#             # 对于内向箭头，x方向必须有足够的重叠
+#             if arrow_direction == 1:  # 内向箭头
+#                 if x_overlap < 5:  # 至少5像素重叠
+#                     return -1000
+                
+#                 # 计算重叠比例
+#                 overlap_ratio_x = x_overlap / max(arrow_width, 1)
+                
+#                 # 如果重叠比例太小，直接拒绝
+#                 if overlap_ratio_x < 0.2:  # 至少20%重叠
+#                     return -1000
+            
+#             # 如果完全没有重叠，检查距离是否在可接受范围内
+#             if x_overlap == 0:
+#                 x_distance = min(abs(arrow_pair[0] - line[2]), abs(arrow_pair[2] - line[0]))
+#                 if x_distance > 3 * arrow_width:
+#                     return -1000
+            
+#             # 判断引线是否在箭头y范围内
+#             is_inside_arrow = arrow_top <= line_y <= arrow_bottom
+            
+#             # 根据箭头方向采用不同的评分策略
+#             if arrow_direction == 1:  # 内向箭头
+#                 # 内向竖直箭头：优先选择箭头内部对称的引线
+#                 if is_inside_arrow:
+#                     # 在箭头内部 - 这是理想情况
+                    
+#                     # 计算距离中心的距离
+#                     center_distance = abs(line_y - arrow_center_y)
+#                     center_distance_ratio = center_distance / (arrow_height / 2)
+                    
+#                     # 距离中心越近分数越高
+#                     if center_distance_ratio <= 1.0:
+#                         base_score = 100 * (1 - center_distance_ratio)
+#                     else:
+#                         # 虽然在内部但超过半高，分数降低
+#                         base_score = 50 * (1 - center_distance_ratio)
+                    
+#                     # ============ 关键修改6：增加x方向重叠奖励 ============
+#                     # 重叠奖励（重要！）
+#                     overlap_bonus_x = 50 * (x_overlap / max(arrow_width, 1))
+                    
+#                     score = base_score + overlap_bonus_x
+                    
+#                     # 额外奖励：非常接近中点
+#                     if center_distance < arrow_height * 0.1:
+#                         score += 40
+#                     elif center_distance < arrow_height * 0.25:
+#                         score += 20
+                        
+#                     # 额外奖励：水平方向对齐良好
+#                     arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
+#                     line_x_center = (line[0] + line[2]) / 2
+#                     if abs(arrow_x_center - line_x_center) < arrow_width * 0.3:
+#                         score += 20
+                        
+#                     # ============ 关键修改7：惩罚重叠不足的情况 ============
+#                     if x_overlap / max(arrow_width, 1) < 0.5:  # 重叠小于50%
+#                         score *= (0.5 + x_overlap / max(arrow_width, 1))  # 0.5-1.0的系数
+                        
+#                 else:
+#                     # 不在箭头内部 - 这是次要选择
+#                     edge_distance = min(abs(line_y - arrow_top), abs(line_y - arrow_bottom))
+#                     edge_distance_ratio = edge_distance / arrow_height
+                    
+#                     if edge_distance_ratio <= 1.0:
+#                         base_score = 60 * (1 - edge_distance_ratio)
+#                     else:
+#                         base_score = max(0, 30 * (1 - edge_distance_ratio))
+                    
+#                     # 重叠奖励
+#                     overlap_bonus_x = 30 * (x_overlap / max(arrow_width, 1))
+                    
+#                     score = base_score + overlap_bonus_x
+                    
+#                     # 外部引线惩罚
+#                     score *= 0.7
+                    
+#             else:  # 外向箭头
+#                 # 外向竖直箭头：只需要找箭头附近最近的引线
+#                 distance_to_top = abs(line_y - arrow_top)
+#                 distance_to_bottom = abs(line_y - arrow_bottom)
+#                 min_distance = min(distance_to_top, distance_to_bottom)
+                
+#                 distance_ratio = min_distance / arrow_height
+                
+#                 # 距离越近越好
+#                 if distance_ratio <= 1.0:
+#                     base_score = 100 * (1 - distance_ratio)
+#                 elif distance_ratio <= 2.0:
+#                     base_score = 70 * (1 - (distance_ratio - 1.0))
+#                 else:
+#                     base_score = max(0, 30 * (1 - distance_ratio / 3))
+                
+#                 # 重叠奖励
+#                 overlap_bonus_x = 20 * (x_overlap / max(arrow_width, 1))
+                
+#                 score = base_score + overlap_bonus_x
+                
+#                 # 如果指定了方向（上/下），检查是否符合
+#                 if is_top is not None:
+#                     if is_top:
+#                         # 期望上横线
+#                         if line_y < arrow_top:
+#                             score += 15
+#                         elif line_y > arrow_bottom:
+#                             score *= 0.8
+#                     else:
+#                         # 期望下横线
+#                         if line_y > arrow_bottom:
+#                             score += 15
+#                         elif line_y < arrow_top:
+#                             score *= 0.8
+            
+#             # ============ 关键修改8：重新设计重叠奖励 ============
+#             # x方向重叠奖励
+#             if x_overlap > 0:
+#                 # 计算重叠比例
+#                 overlap_ratio_x = x_overlap / min(arrow_width, line_width)
+                
+#                 # 根据重叠比例给予奖励
+#                 if overlap_ratio_x >= 0.7:
+#                     score += 40
+#                 elif overlap_ratio_x >= 0.5:
+#                     score += 25
+#                 elif overlap_ratio_x >= 0.3:
+#                     score += 15
+#                 else:
+#                     score += 5
+#             else:
+#                 if x_overlap == 0:
+#                     x_distance = min(abs(arrow_pair[0] - line[2]), abs(arrow_pair[2] - line[0]))
+#                     if x_distance < arrow_width:
+#                         score += 10 * (1 - x_distance / arrow_width)
+            
+#             # X方向中心对齐奖励
+#             arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
+#             line_x_center = (line[0] + line[2]) / 2
+#             center_diff_x = abs(arrow_x_center - line_x_center)
+#             if center_diff_x < arrow_width:
+#                 score += 10 * (1 - center_diff_x / arrow_width)
+        
+#         # 引线长度合理性检查
+#         line_length = max(line_width, line_height)
+#         if is_horizontal:
+#             arrow_length = arrow_width
+#         else:
+#             arrow_length = arrow_height
+        
+#         length_ratio = line_length / max(arrow_length, 1)
+#         if 0.5 <= length_ratio <= 3.0:
+#             score += 10
+#         elif length_ratio > 5.0:
+#             score *= 0.8
+        
+#         # 确保分数不为负
+#         return max(0, score)
+    
+#     ratio = 0.4
+#     ra = 2
+#     # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\\\ver_lines_heng.txt")
+#     # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\\\ver_lines_shu.txt")
+#     print("开始视图**")
+    
+#     for i in range(len(pairs)):
+#         print("一组pairs开始*")
+#         print(f'开始{pairs[i]}判断')
+#         print(f'横{heng}')
+#         print(f'竖{shu}')
+        
+#         if pairs[i][4] == 0:  # 外向标尺线
+#             print("外向")
+#             ratio = 0.3  # 增加ratio，让搜索范围更大
+            
+#             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
+#                 print("横向")
+#                 left_straight = np.zeros((0, 6))  # 增加一列存储评分
+#                 right_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_shu)):
+#                     # 简化：主要根据水平距离匹配
+#                     left_distance = abs(ver_lines_shu[j][0] - pairs[i][0])
+#                     right_distance = abs(ver_lines_shu[j][0] - pairs[i][2])
+                    
+#                     # 左引线匹配条件
+#                     if left_distance < 50:  # 距离小于50像素
+#                         # 检查Y方向是否有重叠或接近
+#                         y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+#                         y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+#                         y_overlap = max(0, y_overlap_end - y_overlap_start)
+                        
+#                         if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+#                                                 abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
+#                             # 计算简化评分
+#                             left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                            
+#                             if left_score > 0:
+#                                 middle[0:4] = ver_lines_shu[j]
+#                                 middle[4] = left_distance  # 存储距离
+#                                 middle[5] = left_score  # 存储评分
+#                                 left_straight = np.r_[left_straight, [middle]]
+#                                 print(f"外向横pairs找到左竖线，距离: {left_distance}, 评分: {left_score}")
+                    
+#                     # 右引线匹配条件
+#                     if right_distance < 50:  # 距离小于50像素
+#                         # 检查Y方向是否有重叠或接近
+#                         y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+#                         y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+#                         y_overlap = max(0, y_overlap_end - y_overlap_start)
+                        
+#                         if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+#                                                 abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
+#                             # 计算简化评分
+#                             right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                            
+#                             if right_score > 0:
+#                                 middle[0:4] = ver_lines_shu[j]
+#                                 middle[4] = right_distance  # 存储距离
+#                                 middle[5] = right_score  # 存储评分
+#                                 right_straight = np.r_[right_straight, [middle]]
+#                                 print(f"外向横pairs找到右竖线，距离: {right_distance}, 评分: {right_score}")
+                
+#                 # 按距离从小到大排序（主要排序依据），距离相同再按评分排序
+#                 if len(left_straight) > 0:
+#                     # 先按距离排序，距离小的在前
+#                     left_straight = left_straight[np.argsort(left_straight[:, 4])]
+#                     # 如果前几个距离相同，再按评分排序
+#                     # 简单实现：取距离最小的几个，再按评分排序
+#                     min_distance = left_straight[0, 4]
+#                     same_distance_indices = np.where(left_straight[:, 4] <= min_distance + 1)[0]
+#                     if len(same_distance_indices) > 1:
+#                         # 对距离相同的部分按评分排序
+#                         same_distance_lines = left_straight[same_distance_indices]
+#                         same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
+#                         left_straight[same_distance_indices] = same_distance_lines
+                
+#                 if len(right_straight) > 0:
+#                     # 先按距离排序，距离小的在前
+#                     right_straight = right_straight[np.argsort(right_straight[:, 4])]
+#                     # 如果前几个距离相同，再按评分排序
+#                     min_distance = right_straight[0, 4]
+#                     same_distance_indices = np.where(right_straight[:, 4] <= min_distance + 1)[0]
+#                     if len(same_distance_indices) > 1:
+#                         # 对距离相同的部分按评分排序
+#                         same_distance_lines = right_straight[same_distance_indices]
+#                         same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
+#                         right_straight[same_distance_indices] = same_distance_lines
+                
+#                 # 根据找到的引线数量处理
+#                 if len(left_straight) > 0 and len(right_straight) > 0:
+#                     # 找到两条引线，直接使用距离最小的
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                     pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                     pairs_length_middle[12] = abs(left_straight[0, 0] - right_straight[0, 0])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print(f"找到两条引线，左距离: {left_straight[0, 4]}, 右距离: {right_straight[0, 4]}")
+#                 elif len(left_straight) > 0 or len(right_straight) > 0:
+#                     # 只找到一条引线，生成另一条
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     # 如果找到左侧引线
+#                     if len(left_straight) > 0:
+#                         pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                         left_line = left_straight[0, 0:4]
+                        
+#                         # 计算左侧引线与箭头对的距离
+#                         left_distance = left_line[0] - pairs[i][0]
+                        
+#                         # 生成右侧引线（与左侧对称）
+#                         right_line = [
+#                             pairs[i][2] - abs(left_distance),  # 保持与左侧对称的距离
+#                             left_line[1],  # y1 - 保持与左侧引线相同的高度
+#                             pairs[i][2] - abs(left_distance),  # x2 - 保持与左侧对称的距离
+#                             left_line[3]   # y2 - 保持与左侧引线相同的高度
+#                         ]
+#                         pairs_length_middle[8:12] = right_line
+#                         print("根据左侧引线生成右侧引线")
+                    
+#                     # 如果找到右侧引线
+#                     elif len(right_straight) > 0:
+#                         pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                         right_line = right_straight[0, 0:4]
+                        
+#                         # 计算右侧引线与箭头对的距离
+#                         right_distance = right_line[0] - pairs[i][2]
+                        
+#                         # 生成左侧引线（与右侧对称）
+#                         left_line = [
+#                             pairs[i][0] + abs(right_distance),  # 保持与右侧对称的距离
+#                             right_line[1],  # y1 - 保持与右侧引线相同的高度
+#                             pairs[i][0] + abs(right_distance),  # x2 - 保持与右侧对称的距离
+#                             right_line[3]   # y2 - 保持与右侧引线相同的高度
+#                         ]
+#                         pairs_length_middle[4:8] = left_line
+#                         print("根据右侧引线生成左侧引线")
+                    
+#                     # 计算距离
+#                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     # 没有找到任何引线，不保存这个pairs
+#                     print("没有找到任何引线，跳过这个pairs")
+            
+#             # 竖向标尺线的处理类似
+#             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
+#                 print("竖向")
+#                 up_straight = np.zeros((0, 5))
+#                 down_straight = np.zeros((0, 5))
+#                 middle = np.zeros((5))
+                
+#                 for j in range(len(ver_lines_heng)):
+#                     # 上端附近的直线
+#                     if pairs[i][1] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
+#                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
+#                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
+#                                 pairs[i][2] - pairs[i][0]):
+#                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
+#                                     pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
+#                                 middle[0:4] = ver_lines_heng[j]
+#                                 middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
+#                                 up_straight = np.r_[up_straight, [middle]]
+#                                 print("外向竖pairs找到上横线")
+ 
+#                     # 下端附近的直线
+#                     if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
+#                                 abs(pairs[i][0] - ver_lines_heng[j][2]),
+#                                 abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
+#                                 pairs[i][2] - pairs[i][0]):
+#                             if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
+#                                     pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
+#                                 middle[0:4] = ver_lines_heng[j]
+#                                 middle[4] = abs(pairs[i][0] - ver_lines_heng[j][0])
+#                                 down_straight = np.r_[down_straight, [middle]]
+#                                 print("外向竖pairs找到下横线")
+                
+#                 up_straight = up_straight[np.argsort(up_straight[:, 4])]
+#                 down_straight = down_straight[np.argsort(down_straight[:, 4])]
+                
+#                 # 修改：根据找到的引线数量处理
+#                 if len(up_straight) > 0 and len(down_straight) > 0:
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                     pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                     pairs_length_middle[12] = abs(up_straight[0, 1] - down_straight[0, 1])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print("找到两条引线，直接使用")
+#                 elif len(up_straight) > 0 or len(down_straight) > 0:
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(up_straight) > 0:
+#                         pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                         up_line = up_straight[0, 0:4]
+                        
+#                         up_distance = up_line[1] - pairs[i][1]
+                        
+#                         # 生成下侧引线（与上侧对称）
+#                         down_line = [
+#                             up_line[0],
+#                             pairs[i][3] - abs(up_distance),  # 保持与上侧对称的距离
+#                             up_line[2],
+#                             pairs[i][3] - abs(up_distance)
+#                         ]
+#                         pairs_length_middle[8:12] = down_line
+#                         print("根据上侧引线生成下侧引线")
+                    
+#                     elif len(down_straight) > 0:
+#                         pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                         down_line = down_straight[0, 0:4]
+                        
+#                         down_distance = down_line[1] - pairs[i][3]
+                        
+#                         # 生成上侧引线（与下侧对称）
+#                         up_line = [
+#                             down_line[0],
+#                             pairs[i][1] + abs(down_distance),  # 保持与下侧对称的距离
+#                             down_line[2],
+#                             pairs[i][1] + abs(down_distance)
+#                         ]
+#                         pairs_length_middle[4:8] = up_line
+#                         print("根据下侧引线生成上侧引线")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs")
+        
+#         # 内向标尺线的处理（保持原有逻辑）
+#         # 在内向标尺线的处理部分添加对称性逻辑
+#         if pairs[i][4] == 1:  # 内向标尺线
+#             print("内向")
+#             ratio = 0.8
+#             ratio_inside = 0.15
+            
+#             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
+#                 print("横向")
+#                 left_straight = np.zeros((0, 6))  # 改为6列，存储[x1,y1,x2,y2,距离,评分]
+#                 right_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_shu)):
+#                     # 使用简化评分函数为内向箭头也计算评分
+#                     # 左端附近的直线
+#                     if pairs[i][0] - ratio_inside * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][0] + ratio * (
+#                             pairs[i][2] - pairs[i][0]):
+#                         # 计算简化评分
+#                         left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                        
+#                         if left_score > 0:  # 使用评分而不是原始条件
+#                             middle[0:4] = ver_lines_shu[j]
+#                             middle[4] = abs(pairs[i][0] - ver_lines_shu[j][0])
+#                             middle[5] = left_score  # 存储评分
+#                             left_straight = np.r_[left_straight, [middle]]
+#                             print(f"内向横pairs找到左竖线，距离: {middle[4]}, 评分: {left_score}")
+ 
+#                     # 右端附近的直线
+#                     if pairs[i][2] - ratio * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][2] + ratio_inside * (pairs[i][2] - pairs[i][0]):
+#                         # 计算简化评分
+#                         right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                        
+#                         if right_score > 0:  # 使用评分而不是原始条件
+#                             middle[0:4] = ver_lines_shu[j]
+#                             middle[4] = abs(pairs[i][2] - ver_lines_shu[j][0])
+#                             middle[5] = right_score  # 存储评分
+#                             right_straight = np.r_[right_straight, [middle]]
+#                             print(f"内向横pairs找到右竖线，距离: {middle[4]}, 评分: {right_score}")
+                
+#                 # 关键修改：寻找最对称的引线对
+#                 if len(left_straight) > 0 and len(right_straight) > 0:
+#                     # 检查是否可能是同一根线
+#                     same_line_detected = False
+                    
+#                     # 检查是否有完全相同的线在left_straight和right_straight中
+#                     for left_line in left_straight:
+#                         for right_line in right_straight:
+#                             if np.array_equal(left_line[0:4], right_line[0:4]):
+#                                 same_line_detected = True
+#                                 print("检测到同一根线被同时当作左引线和右引线")
+#                                 break
+#                         if same_line_detected:
+#                             break
+                    
+#                     if same_line_detected:
+#                         # 如果是同一根线，按照只有一侧有引线处理
+#                         pairs_length_middle[0:4] = pairs[i, 0:4]
+                        
+#                         # 选择评分更高的一侧
+#                         if left_straight[0][5] > right_straight[0][5]:
+#                             # 使用左引线
+#                             left_straight = left_straight[np.argsort(-left_straight[:, 5])]  # 按评分排序
+#                             pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                             left_line = left_straight[0, 0:4]
+                            
+#                             left_distance = left_line[0] - pairs[i][0]
+                            
+#                             # 生成右侧引线（保持对称）
+#                             right_line = [
+#                                 pairs[i][2] - abs(left_distance),
+#                                 left_line[1],
+#                                 pairs[i][2] - abs(left_distance),
+#                                 left_line[3]
+#                             ]
+#                             pairs_length_middle[8:12] = right_line
+#                             print("同一根线：使用左引线，生成右引线（对称生成）")
+#                         else:
+#                             # 使用右引线
+#                             right_straight = right_straight[np.argsort(-right_straight[:, 5])]  # 按评分排序
+#                             pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                             right_line = right_straight[0, 0:4]
+                            
+#                             right_distance = pairs[i][2] - right_line[0]
+                            
+#                             # 生成左侧引线（保持对称）
+#                             left_line = [
+#                                 pairs[i][0] + abs(right_distance),
+#                                 right_line[1],
+#                                 pairs[i][0] + abs(right_distance),
+#                                 right_line[3]
+#                             ]
+#                             pairs_length_middle[4:8] = left_line
+#                             print("同一根线：使用右引线，生成左引线（对称生成）")
+                        
+#                         pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     else:
+#                         # 原有的对称性匹配逻辑
+#                         best_left_idx = 0
+#                         best_right_idx = 0
+#                         best_symmetry_score = float('inf')
+#                         best_combined_score = 0
+                        
+#                         # 限制搜索范围，取评分最高的前几个候选
+#                         left_candidates = left_straight[np.argsort(-left_straight[:, 5])[:3]]  # 取评分最高的3个
+#                         right_candidates = right_straight[np.argsort(-right_straight[:, 5])[:3]]  # 取评分最高的3个
+                        
+#                         for li, left_line in enumerate(left_candidates):
+#                             for ri, right_line in enumerate(right_candidates):
+#                                 # 计算对称性：左右引线到各自箭头的距离应该接近
+#                                 left_distance = left_line[0] - pairs[i][0]  # 左引线到左箭头的距离
+#                                 right_distance = pairs[i][2] - right_line[0]  # 右箭头到右引线的距离
+                                
+#                                 # 对称性评分：距离差的绝对值越小越好
+#                                 symmetry = abs(abs(left_distance) - abs(right_distance))
+                                
+#                                 # 综合评分：对称性 + 单个引线的评分
+#                                 combined_score = (left_line[5] + right_line[5]) * 0.5 - symmetry * 2
+                                
+#                                 if combined_score > best_combined_score:
+#                                     best_combined_score = combined_score
+#                                     best_left_idx = li
+#                                     best_right_idx = ri
+#                                     best_symmetry_score = symmetry
+                        
+#                         print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                        
+#                         pairs_length_middle[0:4] = pairs[i, 0:4]
+#                         pairs_length_middle[4:8] = left_candidates[best_left_idx, 0:4]
+#                         pairs_length_middle[8:12] = right_candidates[best_right_idx, 0:4]
+#                         pairs_length_middle[12] = abs(left_candidates[best_left_idx, 0] - right_candidates[best_right_idx, 0])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                         print("找到两条引线，使用对称性最佳的配对")
+#                     #####
+#                 elif len(left_straight) > 0 or len(right_straight) > 0:
+#                     # 只有一侧找到引线的处理（保持原有逻辑）
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(left_straight) > 0:
+#                         # 按综合评分排序：距离和评分的加权
+#                         left_straight = left_straight[np.argsort(-left_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                         left_line = left_straight[0, 0:4]
+                        
+#                         left_distance = left_line[0] - pairs[i][0]
+                        
+#                         # 生成右侧引线（保持对称）
+#                         right_line = [
+#                             pairs[i][2] - abs(left_distance),
+#                             left_line[1],
+#                             pairs[i][2] - abs(left_distance),
+#                             left_line[3]
+#                         ]
+#                         pairs_length_middle[8:12] = right_line
+#                         print("根据左侧引线生成右侧引线（内向）")
+                    
+#                     elif len(right_straight) > 0:
+#                         # 按综合评分排序
+#                         right_straight = right_straight[np.argsort(-right_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                         right_line = right_straight[0, 0:4]
+                        
+#                         right_distance = pairs[i][2] - right_line[0]
+                        
+#                         # 生成左侧引线（保持对称）
+#                         left_line = [
+#                             pairs[i][0] + abs(right_distance),
+#                             right_line[1],
+#                             pairs[i][0] + abs(right_distance),
+#                             right_line[3]
+#                         ]
+#                         pairs_length_middle[4:8] = left_line
+#                         print("根据右侧引线生成左侧引线（内向）")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs（内向）")
+#             #####
+#             # 在竖向标尺线的处理部分也加入对称性逻辑
+#             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
+#                 print("竖向")
+#                 up_straight = np.zeros((0, 6))  # 改为6列，存储[x1,y1,x2,y2,距离,评分]
+#                 down_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_heng)):
+#                     # 使用评分函数计算上端引线
+#                     # 上端附近的直线
+#                     if pairs[i][1] - ratio_inside * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         print(">>> 进入上横线Y坐标条件")
+#                         print(ver_lines_heng[j])
+#                         # 创建临时竖直线表示，用于评分计算
+#                         # 对于竖直方向的箭头，我们需要转换为水平引线的评分
+#                         # 使用类似逻辑但方向不同
+#                         up_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=True)
+                        
+                        
+#                         if up_score > 0:
+#                             middle[0:4] = ver_lines_heng[j]
+#                             middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
+#                             middle[5] = up_score  # 存储评分
+#                             up_straight = np.r_[up_straight, [middle]]
+#                             print(f"内向竖pairs找到上横线，距离: {middle[4]}, 评分: {up_score}")
+ 
+#                     # 下端附近的直线
+#                     if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio_inside * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         print(">>> 进入下横线Y坐标条件")
+#                         print(ver_lines_heng[j])
+#                         # 创建临时竖直线表示，用于评分计算
+#                         down_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=False)
+                        
+#                         if down_score > 0:
+#                             middle[0:4] = ver_lines_heng[j]
+#                             middle[4] = abs(pairs[i][3] - ver_lines_heng[j][1])
+#                             middle[5] = down_score  # 存储评分
+#                             down_straight = np.r_[down_straight, [middle]]
+#                             print(f"内向竖pairs找到下横线，距离: {middle[4]}, 评分: {down_score}")
+                
+#                 # 关键修改：寻找最对称的引线对
+#                 if len(up_straight) > 0 and len(down_straight) > 0:
+#                     # 检查是否可能是同一根线
+#                     same_line_detected = False
+                    
+#                     # 检查是否有完全相同的线在up_straight和down_straight中
+#                     for up_line in up_straight:
+#                         for down_line in down_straight:
+#                             if np.array_equal(up_line[0:4], down_line[0:4]):
+#                                 same_line_detected = True
+#                                 print("检测到同一根线被同时当作上引线和下引线")
+#                                 break
+#                         if same_line_detected:
+#                             break
+                    
+#                     if same_line_detected:
+#                         # 如果是同一根线，按照只有一侧有引线处理
+#                         print("检测到同一根线，按单侧引线处理")
+                        
+#                         # 选择评分更高的一侧
+#                         if up_straight[0][5] > down_straight[0][5]:
+#                             # 使用上引线
+#                             pairs_length_middle[0:4] = pairs[i, 0:4]
+#                             pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                             up_line = up_straight[0, 0:4]
+                            
+#                             up_distance = up_line[1] - pairs[i][1]
+                            
+#                             # 生成下侧引线（保持对称）
+#                             down_line = [
+#                                 up_line[0],
+#                                 pairs[i][3] - abs(up_distance),
+#                                 up_line[2],
+#                                 pairs[i][3] - abs(up_distance)
+#                             ]
+#                             pairs_length_middle[8:12] = down_line
+#                             print("使用上引线，生成下引线（对称生成）")
+#                         else:
+#                             # 使用下引线
+#                             pairs_length_middle[0:4] = pairs[i, 0:4]
+#                             pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                             down_line = down_straight[0, 0:4]
+                            
+#                             down_distance = pairs[i][3] - down_line[1]
+                            
+#                             # 生成上侧引线（保持对称）
+#                             up_line = [
+#                                 down_line[0],
+#                                 pairs[i][1] + abs(down_distance),
+#                                 down_line[2],
+#                                 pairs[i][1] + abs(down_distance)
+#                             ]
+#                             pairs_length_middle[4:8] = up_line
+#                             print("使用下引线，生成上引线（对称生成）")
+                        
+#                         pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     else:
+#                         # 原有的对称性匹配逻辑
+#                         best_up_idx = 0
+#                         best_down_idx = 0
+#                         best_symmetry_score = float('inf')
+#                         best_combined_score = 0
+                        
+#                         # 限制搜索范围，取评分最高的前几个候选
+#                         up_candidates = up_straight[np.argsort(-up_straight[:, 5])[:3]]
+#                         down_candidates = down_straight[np.argsort(-down_straight[:, 5])[:3]]
+                        
+#                         for ui, up_line in enumerate(up_candidates):
+#                             for di, down_line in enumerate(down_candidates):
+#                                 # 计算对称性：上下引线到各自箭头的距离应该接近
+#                                 up_distance = up_line[1] - pairs[i][1]
+#                                 down_distance = pairs[i][3] - down_line[1]
+                                
+#                                 # 对称性评分：距离差的绝对值越小越好
+#                                 symmetry = abs(abs(up_distance) - abs(down_distance))
+                                
+#                                 # 综合评分：对称性 + 单个引线的评分
+#                                 combined_score = (up_line[5] + down_line[5]) * 0.5 - symmetry * 2
+                                
+#                                 if combined_score > best_combined_score:
+#                                     best_combined_score = combined_score
+#                                     best_up_idx = ui
+#                                     best_down_idx = di
+#                                     best_symmetry_score = symmetry
+                        
+#                         print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                        
+#                         pairs_length_middle[0:4] = pairs[i, 0:4]
+#                         pairs_length_middle[4:8] = up_candidates[best_up_idx, 0:4]
+#                         pairs_length_middle[8:12] = down_candidates[best_down_idx, 0:4]
+#                         pairs_length_middle[12] = abs(up_candidates[best_up_idx, 1] - down_candidates[best_down_idx, 1])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                         print("找到两条不同的引线，使用对称性最佳的配对")
+
+#                 elif len(up_straight) > 0 or len(down_straight) > 0:
+#                     # 只有一侧找到引线的处理（保持不变）
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(up_straight) > 0:
+#                         # 按综合评分排序：距离和评分的加权
+#                         up_straight = up_straight[np.argsort(-up_straight[:, 5])]
+#                         pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                         up_line = up_straight[0, 0:4]
+                        
+#                         up_distance = up_line[1] - pairs[i][1]
+                        
+#                         # 生成下侧引线（保持对称）
+#                         down_line = [
+#                             up_line[0],
+#                             pairs[i][3] - abs(up_distance),
+#                             up_line[2],
+#                             pairs[i][3] - abs(up_distance)
+#                         ]
+#                         pairs_length_middle[8:12] = down_line
+#                         print("根据上侧引线生成下侧引线（单侧引线）")
+                    
+#                     elif len(down_straight) > 0:
+#                         # 按综合评分排序
+#                         down_straight = down_straight[np.argsort(-down_straight[:, 5])]
+#                         pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                         down_line = down_straight[0, 0:4]
+                        
+#                         down_distance = pairs[i][3] - down_line[1]
+                        
+#                         # 生成上侧引线（保持对称）
+#                         up_line = [
+#                             down_line[0],
+#                             pairs[i][1] + abs(down_distance),
+#                             down_line[2],
+#                             pairs[i][1] + abs(down_distance)
+#                         ]
+#                         pairs_length_middle[4:8] = up_line
+#                         print("根据下侧引线生成上侧引线（单侧引线）")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs（内向）")
+        
+#         print("一组pairs结束*")
+    
+#     # 可视化部分保持不变
+#     if test_mode == 1:
+#         drawn_img = cv2.imread(img_path)
+#         for i in range(len(pairs_length)):
+#             x1 = int(pairs_length[i][4])
+#             x2 = int(pairs_length[i][6])
+#             y1 = int(pairs_length[i][5])
+#             y2 = int(pairs_length[i][7])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#             x1 = int(pairs_length[i][8])
+#             x2 = int(pairs_length[i][10])
+#             y1 = int(pairs_length[i][9])
+#             y2 = int(pairs_length[i][11])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#         for i in range(len(pairs_length)):
+#             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
+#             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
+#             point_color = (0, 0, 255)
+#             thickness = 2
+#             lineType = 8
+#             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+#         cv2.namedWindow("LSD", 0)
+#         cv2.imshow("LSD", drawn_img)
+#         cv2.waitKey(0)
+#         cv2.destroyAllWindows()
+#         print("视图结束**")
+    
+#     try:
+#         drawn_img = cv2.imread(img_path)
+#         for i in range(len(pairs_length)):
+#             x1 = int(pairs_length[i][4])
+#             x2 = int(pairs_length[i][6])
+#             y1 = int(pairs_length[i][5])
+#             y2 = int(pairs_length[i][7])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#             x1 = int(pairs_length[i][8])
+#             x2 = int(pairs_length[i][10])
+#             y1 = int(pairs_length[i][9])
+#             y2 = int(pairs_length[i][11])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#         for i in range(len(pairs_length)):
+#             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
+#             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
+#             point_color = (0, 0, 255)
+#             thickness = 2
+#             lineType = 8
+#             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+#         path = fr'{OPENCV_OUTPUT_LINE}/' + img_path[-7:]
+#         cv2.imwrite(path, drawn_img)
+#         print("保存引线+标尺线组合成功:", path)
+#     except:
+#         print("保存引线+标尺线组合失败")
+    
+#     print("***/结束引线和标尺线的匹配/***")
+#     pairs_length = remove_duplicate_pairs(pairs_length)
+#     pairs_length = remove_contained_arrows(pairs_length)
+#     return pairs_length
+########################继续#########################
+# def find_pairs_length(img_path, pairs, test_mode):
+#     '''
+#     功能：检测标尺线附近成对的引线
+#     pairs np.二维数组[x1,y1,x2,y2,0 = outside 1 = inside]
+#     img_path str
+#     '''
+#     print("***/开始引线和标尺线的匹配/***")
+#     # 1.根据pinmap所在位置推测出大概十字线坐标
+#     pin_map_limation = get_np_array_in_txt(f'{YOLO_DATA}/pin_map_limation.txt')
+#     w, h = get_img_info(img_path)
+#     a = np.array(([1, 1, 1, 1]))
+#     if (pin_map_limation != a).all():
+#         heng = (pin_map_limation[0][3] + pin_map_limation[0][1]) * 0.5 / 2
+#         shu = (pin_map_limation[0][2] + pin_map_limation[0][0]) * 0.5 / 2
+#     if img_path == f'{YOLO_DATA}/side.jpg' or img_path == f'{YOLO_DATA}/top.jpg':
+#         heng = h / 2
+#         shu = w / 2
+ 
+#     ver_lines_heng, ver_lines_shu = find_all_lines(img_path, test_mode)
+#     # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_heng.txt")
+#     # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_shu.txt")
+#     pairs_length = np.zeros((0, 13))  # 存储pairs以及所表示的距离
+#     pairs_length_middle = np.zeros(13)
+ 
+#     # 横向直线的坐标排列np.二维数组[x1,y1,x2,y2]改为x1<x2 y1<y2
+#     new_ver_lines = np.zeros((0, 4))
+#     for i in range(len(ver_lines_heng)):
+#         if ver_lines_heng[i][0] > ver_lines_heng[i][2]:
+#             c = ver_lines_heng[i][0]
+#             ver_lines_heng[i][0] = ver_lines_heng[i][2]
+#             ver_lines_heng[i][2] = c
+#         if ver_lines_heng[i][1] > ver_lines_heng[i][3]:
+#             c = ver_lines_heng[i][1]
+#             ver_lines_heng[i][1] = ver_lines_heng[i][3]
+#             ver_lines_heng[i][3] = c
+#     # 滤除较短的直线
+#     min_length = 10  # 最短直线长
+#     for i in range(len(ver_lines_heng)):
+#         if max(abs(ver_lines_heng[i][2] - ver_lines_heng[i][0]),
+#                abs(ver_lines_heng[i][3] - ver_lines_heng[i][1])) > min_length:
+#             new_ver_lines = np.r_[new_ver_lines, [ver_lines_heng[i]]]
+#     ver_lines_heng = new_ver_lines
+#     min_length = 20  # 最短直线长
+#     new_ver_lines = np.zeros((0, 4))
+#     ver_lines_shu = np.array(ver_lines_shu)
+#     for i in range(len(ver_lines_shu)):
+#         if max(abs(ver_lines_shu[i][2] - ver_lines_shu[i][0]),
+#                abs(ver_lines_shu[i][3] - ver_lines_shu[i][1])) > min_length:
+#             new_ver_lines = np.r_[new_ver_lines, [ver_lines_shu[i]]]
+#     ver_lines_shu = new_ver_lines
+    
+#     # 新增：计算引线与箭头的匹配评分函数 - 简化版本，主要考虑距离
+#     def calculate_match_score_simple(arrow_pair, line, heng, is_left=True, is_top=None):
+#         """
+#         简化版匹配评分，支持水平和竖直方向
+#         箭头方向通过arrow_pair[4]判断：0 = outside（外向），1 = inside（内向）
+#         """
+#         score = 0
+        
+#         # 判断是水平箭头还是竖直箭头
+#         arrow_width = arrow_pair[2] - arrow_pair[0]
+#         arrow_height = arrow_pair[3] - arrow_pair[1]
+#         is_horizontal = arrow_width > arrow_height
+        
+#         # 判断line是水平还是竖直
+#         line_width = line[2] - line[0]
+#         line_height = line[3] - line[1]
+#         line_is_horizontal = line_width > line_height
+        
+#         # 获取箭头方向
+#         arrow_direction = arrow_pair[4]  # 0 = 外向, 1 = 内向
+        
+#         if is_horizontal:
+#             # 水平箭头处理 - 期望竖直引线
+#             if line_is_horizontal:
+#                 return -1000
+                
+#             # 获取箭头关键坐标
+#             arrow_left = arrow_pair[0]
+#             arrow_right = arrow_pair[2]
+#             arrow_center_x = (arrow_left + arrow_right) / 2
+#             line_x = line[0]  # 竖直线段的x坐标
+            
+#             # 计算y方向重叠
+#             y_overlap_start = max(arrow_pair[1], line[1])
+#             y_overlap_end = min(arrow_pair[3], line[3])
+#             y_overlap = max(0, y_overlap_end - y_overlap_start)
+            
+#             # ============ 关键修改1：增加y方向重叠检查 ============
+#             # 对于内向箭头，y方向必须有足够的重叠
+#             if arrow_direction == 1:  # 内向箭头
+#                 if y_overlap < 5:  # 至少5像素重叠
+#                     return -1000
+                
+#                 # 计算重叠比例
+#                 overlap_ratio_y = y_overlap / max(arrow_height, 1)
+                
+#                 # 如果重叠比例太小，直接拒绝
+#                 if overlap_ratio_y < 0.2:  # 至少20%重叠
+#                     return -1000
+            
+#             # 如果完全没有重叠，检查距离是否在可接受范围内
+#             if y_overlap == 0:
+#                 y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
+#                 if y_distance > 3 * arrow_height:
+#                     return -1000
+            
+#             # 判断引线是否在箭头x范围内（水平方向）
+#             is_inside_arrow = arrow_left <= line_x <= arrow_right
+            
+#             # 根据箭头方向采用不同的评分策略
+#             if arrow_direction == 1:  # 内向箭头
+#                 # 内向水平箭头：优先选择箭头内部对称的引线
+#                 if is_inside_arrow:
+#                     # 在箭头内部 - 这是理想情况
+                    
+#                     # 计算距离中心的距离
+#                     center_distance = abs(line_x - arrow_center_x)
+#                     center_distance_ratio = center_distance / (arrow_width / 2)
+                    
+#                     # 距离中心越近分数越高
+#                     if center_distance_ratio <= 1.0:
+#                         base_score = 100 * (1 - center_distance_ratio)
+#                     else:
+#                         # 虽然在内部但超过半宽，分数降低
+#                         base_score = 50 * (1 - center_distance_ratio)
+                    
+#                     # ============ 关键修改2：增加y方向重叠奖励 ============
+#                     # 重叠奖励（重要！）
+#                     overlap_bonus_y = 50 * (y_overlap / max(arrow_height, 1))
+                    
+#                     score = base_score + overlap_bonus_y
+                    
+#                     # 额外奖励：非常接近中点
+#                     if center_distance < arrow_width * 0.1:
+#                         score += 40
+#                     elif center_distance < arrow_width * 0.25:
+#                         score += 20
+                        
+#                     # 额外奖励：垂直方向对齐良好
+#                     arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+#                     line_y_center = (line[1] + line[3]) / 2
+#                     if abs(arrow_y_center - line_y_center) < arrow_height * 0.3:
+#                         score += 20
+                        
+#                     # ============ 关键修改3：惩罚重叠不足的情况 ============
+#                     if y_overlap / max(arrow_height, 1) < 0.5:  # 重叠小于50%
+#                         score *= (0.5 + y_overlap / max(arrow_height, 1))  # 0.5-1.0的系数
+                        
+#                 else:
+#                     # 不在箭头内部 - 这是次要选择
+#                     edge_distance = min(abs(line_x - arrow_left), abs(line_x - arrow_right))
+#                     edge_distance_ratio = edge_distance / arrow_width
+                    
+#                     if edge_distance_ratio <= 1.0:
+#                         base_score = 60 * (1 - edge_distance_ratio)
+#                     else:
+#                         base_score = max(0, 30 * (1 - edge_distance_ratio))
+                    
+#                     # 重叠奖励
+#                     overlap_bonus_y = 30 * (y_overlap / max(arrow_height, 1))
+                    
+#                     score = base_score + overlap_bonus_y
+                    
+#                     # 外部引线惩罚
+#                     score *= 0.7
+                    
+#             else:  # 外向箭头
+#                 # 外向水平箭头：只需要找箭头附近最近的引线
+#                 distance_to_left = abs(line_x - arrow_left)
+#                 distance_to_right = abs(line_x - arrow_right)
+#                 min_distance = min(distance_to_left, distance_to_right)
+                
+#                 distance_ratio = min_distance / arrow_width
+                
+#                 # 距离越近越好
+#                 if distance_ratio <= 1.0:
+#                     base_score = 100 * (1 - distance_ratio)
+#                 elif distance_ratio <= 2.0:
+#                     base_score = 70 * (1 - (distance_ratio - 1.0))
+#                 else:
+#                     base_score = max(0, 30 * (1 - distance_ratio / 3))
+                
+#                 # 重叠奖励
+#                 overlap_bonus_y = 20 * (y_overlap / max(arrow_height, 1))
+                
+#                 score = base_score + overlap_bonus_y
+                
+#                 # 如果指定了方向（左/右），检查是否符合
+#                 if is_left is not None:
+#                     if is_left:
+#                         # 期望引线在箭头左侧
+#                         if line_x < arrow_left:
+#                             score += 15
+#                         elif line_x > arrow_right:
+#                             score *= 0.8
+#                     else:
+#                         # 期望引线在箭头右侧
+#                         if line_x > arrow_right:
+#                             score += 15
+#                         elif line_x < arrow_left:
+#                             score *= 0.8
+            
+#             # ============ 关键修改4：重新设计重叠奖励 ============
+#             # y方向重叠奖励
+#             if y_overlap > 0:
+#                 # 计算重叠比例
+#                 overlap_ratio_y = y_overlap / min(arrow_height, line_height)
+                
+#                 # 根据重叠比例给予奖励
+#                 if overlap_ratio_y >= 0.7:
+#                     score += 40
+#                 elif overlap_ratio_y >= 0.5:
+#                     score += 25
+#                 elif overlap_ratio_y >= 0.3:
+#                     score += 15
+#                 else:
+#                     score += 5
+#             else:
+#                 if y_overlap == 0:
+#                     y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
+#                     if y_distance < arrow_height:
+#                         score += 10 * (1 - y_distance / arrow_height)
+            
+#             # Y方向中心对齐奖励
+#             arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+#             line_y_center = (line[1] + line[3]) / 2
+#             center_diff_y = abs(arrow_y_center - line_y_center)
+#             if center_diff_y < arrow_height:
+#                 score += 10 * (1 - center_diff_y / arrow_height)
+            
+#         else:
+#             # 竖直箭头处理 - 期望水平引线
+#             if not line_is_horizontal:
+#                 return -1000
+                
+#             # 现在line是水平横线
+#             line_y = line[1]  # 水平横线的y坐标
+#             arrow_top = arrow_pair[1]
+#             arrow_bottom = arrow_pair[3]
+#             arrow_center_y = (arrow_top + arrow_bottom) / 2
+            
+#             # 计算x方向重叠
+#             x_overlap_start = max(arrow_pair[0], line[0])
+#             x_overlap_end = min(arrow_pair[2], line[2])
+#             x_overlap = max(0, x_overlap_end - x_overlap_start)
+            
+#             # ============ 关键修改5：增加x方向重叠检查 ============
+#             # 对于内向箭头，x方向必须有足够的重叠
+#             if arrow_direction == 1:  # 内向箭头
+#                 if x_overlap < 5:  # 至少5像素重叠
+#                     return -1000
+                
+#                 # 计算重叠比例
+#                 overlap_ratio_x = x_overlap / max(arrow_width, 1)
+                
+#                 # 如果重叠比例太小，直接拒绝
+#                 if overlap_ratio_x < 0.2:  # 至少20%重叠
+#                     return -1000
+            
+#             # 如果完全没有重叠，检查距离是否在可接受范围内
+#             if x_overlap == 0:
+#                 x_distance = min(abs(arrow_pair[0] - line[2]), abs(arrow_pair[2] - line[0]))
+#                 if x_distance > 3 * arrow_width:
+#                     return -1000
+            
+#             # 判断引线是否在箭头y范围内
+#             is_inside_arrow = arrow_top <= line_y <= arrow_bottom
+            
+#             # 根据箭头方向采用不同的评分策略
+#             if arrow_direction == 1:  # 内向箭头
+#                 # 内向竖直箭头：优先选择箭头内部对称的引线
+#                 if is_inside_arrow:
+#                     # 在箭头内部 - 这是理想情况
+                    
+#                     # 计算距离中心的距离
+#                     center_distance = abs(line_y - arrow_center_y)
+#                     center_distance_ratio = center_distance / (arrow_height / 2)
+                    
+#                     # 距离中心越近分数越高
+#                     if center_distance_ratio <= 1.0:
+#                         base_score = 100 * (1 - center_distance_ratio)
+#                     else:
+#                         # 虽然在内部但超过半高，分数降低
+#                         base_score = 50 * (1 - center_distance_ratio)
+                    
+#                     # ============ 关键修改6：增加x方向重叠奖励 ============
+#                     # 重叠奖励（重要！）
+#                     overlap_bonus_x = 50 * (x_overlap / max(arrow_width, 1))
+                    
+#                     score = base_score + overlap_bonus_x
+                    
+#                     # 额外奖励：非常接近中点
+#                     if center_distance < arrow_height * 0.1:
+#                         score += 40
+#                     elif center_distance < arrow_height * 0.25:
+#                         score += 20
+                        
+#                     # 额外奖励：水平方向对齐良好
+#                     arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
+#                     line_x_center = (line[0] + line[2]) / 2
+#                     if abs(arrow_x_center - line_x_center) < arrow_width * 0.3:
+#                         score += 20
+                        
+#                     # ============ 关键修改7：惩罚重叠不足的情况 ============
+#                     if x_overlap / max(arrow_width, 1) < 0.5:  # 重叠小于50%
+#                         score *= (0.5 + x_overlap / max(arrow_width, 1))  # 0.5-1.0的系数
+                        
+#                 else:
+#                     # 不在箭头内部 - 这是次要选择
+#                     edge_distance = min(abs(line_y - arrow_top), abs(line_y - arrow_bottom))
+#                     edge_distance_ratio = edge_distance / arrow_height
+                    
+#                     if edge_distance_ratio <= 1.0:
+#                         base_score = 60 * (1 - edge_distance_ratio)
+#                     else:
+#                         base_score = max(0, 30 * (1 - edge_distance_ratio))
+                    
+#                     # 重叠奖励
+#                     overlap_bonus_x = 30 * (x_overlap / max(arrow_width, 1))
+                    
+#                     score = base_score + overlap_bonus_x
+                    
+#                     # 外部引线惩罚
+#                     score *= 0.7
+                    
+#             else:  # 外向箭头
+#                 # 外向竖直箭头：只需要找箭头附近最近的引线
+#                 distance_to_top = abs(line_y - arrow_top)
+#                 distance_to_bottom = abs(line_y - arrow_bottom)
+#                 min_distance = min(distance_to_top, distance_to_bottom)
+                
+#                 distance_ratio = min_distance / arrow_height
+                
+#                 # 距离越近越好
+#                 if distance_ratio <= 1.0:
+#                     base_score = 100 * (1 - distance_ratio)
+#                 elif distance_ratio <= 2.0:
+#                     base_score = 70 * (1 - (distance_ratio - 1.0))
+#                 else:
+#                     base_score = max(0, 30 * (1 - distance_ratio / 3))
+                
+#                 # 重叠奖励
+#                 overlap_bonus_x = 20 * (x_overlap / max(arrow_width, 1))
+                
+#                 score = base_score + overlap_bonus_x
+                
+#                 # 如果指定了方向（上/下），检查是否符合
+#                 if is_top is not None:
+#                     if is_top:
+#                         # 期望上横线
+#                         if line_y < arrow_top:
+#                             score += 15
+#                         elif line_y > arrow_bottom:
+#                             score *= 0.8
+#                     else:
+#                         # 期望下横线
+#                         if line_y > arrow_bottom:
+#                             score += 15
+#                         elif line_y < arrow_top:
+#                             score *= 0.8
+            
+#             # ============ 关键修改8：重新设计重叠奖励 ============
+#             # x方向重叠奖励
+#             if x_overlap > 0:
+#                 # 计算重叠比例
+#                 overlap_ratio_x = x_overlap / min(arrow_width, line_width)
+                
+#                 # 根据重叠比例给予奖励
+#                 if overlap_ratio_x >= 0.7:
+#                     score += 40
+#                 elif overlap_ratio_x >= 0.5:
+#                     score += 25
+#                 elif overlap_ratio_x >= 0.3:
+#                     score += 15
+#                 else:
+#                     score += 5
+#             else:
+#                 if x_overlap == 0:
+#                     x_distance = min(abs(arrow_pair[0] - line[2]), abs(arrow_pair[2] - line[0]))
+#                     if x_distance < arrow_width:
+#                         score += 10 * (1 - x_distance / arrow_width)
+            
+#             # X方向中心对齐奖励
+#             arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
+#             line_x_center = (line[0] + line[2]) / 2
+#             center_diff_x = abs(arrow_x_center - line_x_center)
+#             if center_diff_x < arrow_width:
+#                 score += 10 * (1 - center_diff_x / arrow_width)
+        
+#         # 引线长度合理性检查
+#         line_length = max(line_width, line_height)
+#         if is_horizontal:
+#             arrow_length = arrow_width
+#         else:
+#             arrow_length = arrow_height
+        
+#         length_ratio = line_length / max(arrow_length, 1)
+#         if 0.5 <= length_ratio <= 3.0:
+#             score += 10
+#         elif length_ratio > 5.0:
+#             score *= 0.8
+        
+#         # 确保分数不为负
+#         return max(0, score)
+    
+#     ratio = 0.4
+#     ra = 2
+#     # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\\\ver_lines_heng.txt")
+#     # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\\\ver_lines_shu.txt")
+#     print("开始视图**")
+    
+#     for i in range(len(pairs)):
+#         print("一组pairs开始*")
+#         print(f'开始{pairs[i]}判断')
+#         print(f'横{heng}')
+#         print(f'竖{shu}')
+#         ########
+#         if pairs[i][4] == 0:  # 外向标尺线
+#             print("外向")
+            
+#             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
+#                 print("横向")
+#                 left_straight = np.zeros((0, 6))  # 增加一列存储评分
+#                 right_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 # 计算箭头的左右端点
+#                 arrow_left = pairs[i][0]
+#                 arrow_right = pairs[i][2]
+#                 arrow_height = pairs[i][3] - pairs[i][1]
+                
+#                 for j in range(len(ver_lines_shu)):
+#                     line_x = ver_lines_shu[j][0]  # 竖线的x坐标
+                    
+#                     # 计算到左右端点的距离（不考虑方向，只计算绝对值）
+#                     distance_to_left = abs(line_x - arrow_left)
+#                     distance_to_right = abs(line_x - arrow_right)
+                    
+#                     # 检查Y方向是否有足够重叠
+#                     y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+#                     y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+#                     y_overlap = max(0, y_overlap_end - y_overlap_start)
+                    
+#                     # 需要有一定y方向重叠
+#                     if y_overlap > arrow_height * 0.3 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+#                                                             abs(pairs[i][3] - ver_lines_shu[j][1])) < arrow_height * 0.2:
+                        
+#                         # 判断这条线更适合作为左引线还是右引线
+#                         if distance_to_left < distance_to_right:
+#                             # 更适合作为左引线
+#                             left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                            
+#                             if left_score > 0:
+#                                 middle[0:4] = ver_lines_shu[j]
+#                                 middle[4] = distance_to_left  # 存储距离
+#                                 middle[5] = left_score  # 存储评分
+#                                 left_straight = np.r_[left_straight, [middle]]
+#                                 print(f"外向横pairs找到左竖线，距离: {distance_to_left}, 评分: {left_score}")
+#                         else:
+#                             # 更适合作为右引线
+#                             right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                            
+#                             if right_score > 0:
+#                                 middle[0:4] = ver_lines_shu[j]
+#                                 middle[4] = distance_to_right  # 存储距离
+#                                 middle[5] = right_score  # 存储评分
+#                                 right_straight = np.r_[right_straight, [middle]]
+#                                 print(f"外向横pairs找到右竖线，距离: {distance_to_right}, 评分: {right_score}")
+                
+#                 # === 只需要排序一次 ===
+#                 if len(left_straight) > 0:
+#                     left_straight = left_straight[np.argsort(left_straight[:, 4])]
+#                     print(f"选择左引线：距离={left_straight[0, 4]}")
+                
+#                 if len(right_straight) > 0:
+#                     right_straight = right_straight[np.argsort(right_straight[:, 4])]
+#                     print(f"选择右引线：距离={right_straight[0, 4]}")
+                
+#                 # 根据找到的引线数量处理
+#                 if len(left_straight) > 0 and len(right_straight) > 0:
+#                     # 找到两条引线，直接使用距离最小的
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                     pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                     pairs_length_middle[12] = abs(left_straight[0, 0] - right_straight[0, 0])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print(f"找到两条引线，左距离: {left_straight[0, 4]}, 右距离: {right_straight[0, 4]}")
+#                 elif len(left_straight) > 0 or len(right_straight) > 0:
+#                     # 只找到一条引线，生成另一条
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     # 如果找到左侧引线
+#                     if len(left_straight) > 0:
+#                         pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                         left_line = left_straight[0, 0:4]
+                        
+#                         # 计算左侧引线与箭头对的距离
+#                         left_distance = left_line[0] - pairs[i][0]
+                        
+#                         # 生成右侧引线（与左侧对称）
+#                         right_line = [
+#                             pairs[i][2] - abs(left_distance),  # 保持与左侧对称的距离
+#                             left_line[1],  # y1 - 保持与左侧引线相同的高度
+#                             pairs[i][2] - abs(left_distance),  # x2 - 保持与左侧对称的距离
+#                             left_line[3]   # y2 - 保持与左侧引线相同的高度
+#                         ]
+#                         pairs_length_middle[8:12] = right_line
+#                         print("根据左侧引线生成右侧引线")
+                    
+#                     # 如果找到右侧引线
+#                     elif len(right_straight) > 0:
+#                         pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                         right_line = right_straight[0, 0:4]
+                        
+#                         # 计算右侧引线与箭头对的距离
+#                         right_distance = right_line[0] - pairs[i][2]
+                        
+#                         # 生成左侧引线（与右侧对称）
+#                         left_line = [
+#                             pairs[i][0] + abs(right_distance),  # 保持与右侧对称的距离
+#                             right_line[1],  # y1 - 保持与右侧引线相同的高度
+#                             pairs[i][0] + abs(right_distance),  # x2 - 保持与右侧对称的距离
+#                             right_line[3]   # y2 - 保持与右侧引线相同的高度
+#                         ]
+#                         pairs_length_middle[4:8] = left_line
+#                         print("根据右侧引线生成左侧引线")
+                    
+#                     # 计算距离
+#                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     # 没有找到任何引线，不保存这个pairs
+#                     print("没有找到任何引线，跳过这个pairs")
+            
+#             # 竖向标尺线的处理类似
+#             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
+#                 print("竖向")
+#                 up_straight = np.zeros((0, 6))  # 改为6列
+#                 down_straight = np.zeros((0, 6))  # 改为6列
+#                 middle = np.zeros(6)  # 改为6列
+                
+#                 # 计算箭头的上下端点
+#                 arrow_top = pairs[i][1]
+#                 arrow_bottom = pairs[i][3]
+#                 arrow_width = pairs[i][2] - pairs[i][0]
+                
+#                 for j in range(len(ver_lines_heng)):
+#                     line_y = ver_lines_heng[j][1]  # 横线的y坐标
+                    
+#                     # 计算到上下端点的距离（不考虑方向，只计算绝对值）
+#                     distance_to_top = abs(line_y - arrow_top)
+#                     distance_to_bottom = abs(line_y - arrow_bottom)
+                    
+#                     # 检查X方向是否有重叠
+#                     x_overlap_start = max(pairs[i][0], ver_lines_heng[j][0])
+#                     x_overlap_end = min(pairs[i][2], ver_lines_heng[j][2])
+#                     x_overlap = max(0, x_overlap_end - x_overlap_start)
+                    
+#                     # 需要有一定x方向重叠
+#                     if x_overlap > arrow_width * 0.3 or min(abs(pairs[i][0] - ver_lines_heng[j][2]), 
+#                                                             abs(pairs[i][2] - ver_lines_heng[j][0])) < arrow_width * 0.2:
+                        
+#                         # 判断这条线更适合作为上引线还是下引线
+#                         # 规则：离哪个端点更近，就作为哪个方向的引线
+#                         if distance_to_top < distance_to_bottom:
+#                             # 更适合作为上引线
+#                             up_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=True)
+                            
+#                             if up_score > 0:
+#                                 middle[0:4] = ver_lines_heng[j]
+#                                 middle[4] = distance_to_top  # 存储距离
+#                                 middle[5] = up_score  # 存储评分
+#                                 up_straight = np.r_[up_straight, [middle]]
+#                                 print(f"外向竖pairs找到上横线，距离: {distance_to_top}, 评分: {up_score}")
+#                         else:
+#                             # 更适合作为下引线
+#                             down_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=False)
+                            
+#                             if down_score > 0:
+#                                 middle[0:4] = ver_lines_heng[j]
+#                                 middle[4] = distance_to_bottom  # 存储距离
+#                                 middle[5] = down_score  # 存储评分
+#                                 down_straight = np.r_[down_straight, [middle]]
+#                                 print(f"外向竖pairs找到下横线，距离: {distance_to_bottom}, 评分: {down_score}")
+                
+#                 # 按距离从小到大排序
+#                 if len(up_straight) > 0:
+#                     up_straight = up_straight[np.argsort(up_straight[:, 4])]
+#                     print(f"选择上引线：距离={up_straight[0, 4]}")
+                
+#                 if len(down_straight) > 0:
+#                     down_straight = down_straight[np.argsort(down_straight[:, 4])]
+#                     print(f"选择下引线：距离={down_straight[0, 4]}")
+                
+#                 # 根据找到的引线数量处理
+#                 if len(up_straight) > 0 and len(down_straight) > 0:
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+#                     pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                     pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                     pairs_length_middle[12] = abs(up_straight[0, 1] - down_straight[0, 1])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     print("找到两条引线，直接使用")
+#                 elif len(up_straight) > 0 or len(down_straight) > 0:
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(up_straight) > 0:
+#                         pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                         up_line = up_straight[0, 0:4]
+                        
+#                         up_distance = up_line[1] - pairs[i][1]
+                        
+#                         # 生成下侧引线（与上侧对称）
+#                         down_line = [
+#                             up_line[0],
+#                             pairs[i][3] - abs(up_distance),  # 保持与上侧对称的距离
+#                             up_line[2],
+#                             pairs[i][3] - abs(up_distance)
+#                         ]
+#                         pairs_length_middle[8:12] = down_line
+#                         print("根据上侧引线生成下侧引线")
+                    
+#                     elif len(down_straight) > 0:
+#                         pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                         down_line = down_straight[0, 0:4]
+                        
+#                         down_distance = down_line[1] - pairs[i][3]
+                        
+#                         # 生成上侧引线（与下侧对称）
+#                         up_line = [
+#                             down_line[0],
+#                             pairs[i][1] + abs(down_distance),  # 保持与下侧对称的距离
+#                             down_line[2],
+#                             pairs[i][1] + abs(down_distance)
+#                         ]
+#                         pairs_length_middle[4:8] = up_line
+#                         print("根据下侧引线生成上侧引线")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs")
+        
+#         # 内向标尺线的处理（保持原有逻辑）
+#         # 在内向标尺线的处理部分添加对称性逻辑
+#         if pairs[i][4] == 1:  # 内向标尺线
+#             print("内向")
+#             ratio = 0.8
+#             ratio_inside = 0.15
+            
+#             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
+#                 print("横向")
+#                 left_straight = np.zeros((0, 6))  # 改为6列，存储[x1,y1,x2,y2,距离,评分]
+#                 right_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_shu)):
+#                     # 使用简化评分函数为内向箭头也计算评分
+#                     # 左端附近的直线
+#                     if pairs[i][0] - ratio_inside * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][0] + ratio * (
+#                             pairs[i][2] - pairs[i][0]):
+#                         # 计算简化评分
+#                         left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
+                        
+#                         if left_score > 0:  # 使用评分而不是原始条件
+#                             middle[0:4] = ver_lines_shu[j]
+#                             middle[4] = abs(pairs[i][0] - ver_lines_shu[j][0])
+#                             middle[5] = left_score  # 存储评分
+#                             left_straight = np.r_[left_straight, [middle]]
+#                             print(f"内向横pairs找到左竖线，距离: {middle[4]}, 评分: {left_score}")
+ 
+#                     # 右端附近的直线
+#                     if pairs[i][2] - ratio * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][2] + ratio_inside * (pairs[i][2] - pairs[i][0]):
+#                         # 计算简化评分
+#                         right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
+                        
+#                         if right_score > 0:  # 使用评分而不是原始条件
+#                             middle[0:4] = ver_lines_shu[j]
+#                             middle[4] = abs(pairs[i][2] - ver_lines_shu[j][0])
+#                             middle[5] = right_score  # 存储评分
+#                             right_straight = np.r_[right_straight, [middle]]
+#                             print(f"内向横pairs找到右竖线，距离: {middle[4]}, 评分: {right_score}")
+                
+#                 # 关键修改：寻找最对称的引线对
+#                 if len(left_straight) > 0 and len(right_straight) > 0:
+#                     # 检查是否可能是同一根线
+#                     same_line_detected = False
+                    
+#                     # 检查是否有完全相同的线在left_straight和right_straight中
+#                     for left_line in left_straight:
+#                         for right_line in right_straight:
+#                             if np.array_equal(left_line[0:4], right_line[0:4]):
+#                                 same_line_detected = True
+#                                 print("检测到同一根线被同时当作左引线和右引线")
+#                                 break
+#                         if same_line_detected:
+#                             break
+                    
+#                     if same_line_detected:
+#                         # 如果是同一根线，按照只有一侧有引线处理
+#                         pairs_length_middle[0:4] = pairs[i, 0:4]
+                        
+#                         # 选择评分更高的一侧
+#                         if left_straight[0][5] > right_straight[0][5]:
+#                             # 使用左引线
+#                             left_straight = left_straight[np.argsort(-left_straight[:, 5])]  # 按评分排序
+#                             pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                             left_line = left_straight[0, 0:4]
+                            
+#                             left_distance = left_line[0] - pairs[i][0]
+                            
+#                             # 生成右侧引线（保持对称）
+#                             right_line = [
+#                                 pairs[i][2] - abs(left_distance),
+#                                 left_line[1],
+#                                 pairs[i][2] - abs(left_distance),
+#                                 left_line[3]
+#                             ]
+#                             pairs_length_middle[8:12] = right_line
+#                             print("同一根线：使用左引线，生成右引线（对称生成）")
+#                         else:
+#                             # 使用右引线
+#                             right_straight = right_straight[np.argsort(-right_straight[:, 5])]  # 按评分排序
+#                             pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                             right_line = right_straight[0, 0:4]
+                            
+#                             right_distance = pairs[i][2] - right_line[0]
+                            
+#                             # 生成左侧引线（保持对称）
+#                             left_line = [
+#                                 pairs[i][0] + abs(right_distance),
+#                                 right_line[1],
+#                                 pairs[i][0] + abs(right_distance),
+#                                 right_line[3]
+#                             ]
+#                             pairs_length_middle[4:8] = left_line
+#                             print("同一根线：使用右引线，生成左引线（对称生成）")
+                        
+#                         pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     else:
+#                         # 原有的对称性匹配逻辑
+#                         best_left_idx = 0
+#                         best_right_idx = 0
+#                         best_symmetry_score = float('inf')
+#                         best_combined_score = 0
+                        
+#                         # 限制搜索范围，取评分最高的前几个候选
+#                         left_candidates = left_straight[np.argsort(-left_straight[:, 5])[:3]]  # 取评分最高的3个
+#                         right_candidates = right_straight[np.argsort(-right_straight[:, 5])[:3]]  # 取评分最高的3个
+                        
+#                         for li, left_line in enumerate(left_candidates):
+#                             for ri, right_line in enumerate(right_candidates):
+#                                 # 计算对称性：左右引线到各自箭头的距离应该接近
+#                                 left_distance = left_line[0] - pairs[i][0]  # 左引线到左箭头的距离
+#                                 right_distance = pairs[i][2] - right_line[0]  # 右箭头到右引线的距离
+                                
+#                                 # 对称性评分：距离差的绝对值越小越好
+#                                 symmetry = abs(abs(left_distance) - abs(right_distance))
+                                
+#                                 # 综合评分：对称性 + 单个引线的评分
+#                                 combined_score = (left_line[5] + right_line[5]) * 0.5 - symmetry * 2
+                                
+#                                 if combined_score > best_combined_score:
+#                                     best_combined_score = combined_score
+#                                     best_left_idx = li
+#                                     best_right_idx = ri
+#                                     best_symmetry_score = symmetry
+                        
+#                         print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                        
+#                         pairs_length_middle[0:4] = pairs[i, 0:4]
+#                         pairs_length_middle[4:8] = left_candidates[best_left_idx, 0:4]
+#                         pairs_length_middle[8:12] = right_candidates[best_right_idx, 0:4]
+#                         pairs_length_middle[12] = abs(left_candidates[best_left_idx, 0] - right_candidates[best_right_idx, 0])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                         print("找到两条引线，使用对称性最佳的配对")
+#                     #####
+#                 elif len(left_straight) > 0 or len(right_straight) > 0:
+#                     # 只有一侧找到引线的处理（保持原有逻辑）
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(left_straight) > 0:
+#                         # 按综合评分排序：距离和评分的加权
+#                         left_straight = left_straight[np.argsort(-left_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[4:8] = left_straight[0, 0:4]
+#                         left_line = left_straight[0, 0:4]
+                        
+#                         left_distance = left_line[0] - pairs[i][0]
+                        
+#                         # 生成右侧引线（保持对称）
+#                         right_line = [
+#                             pairs[i][2] - abs(left_distance),
+#                             left_line[1],
+#                             pairs[i][2] - abs(left_distance),
+#                             left_line[3]
+#                         ]
+#                         pairs_length_middle[8:12] = right_line
+#                         print("根据左侧引线生成右侧引线（内向）")
+                    
+#                     elif len(right_straight) > 0:
+#                         # 按综合评分排序
+#                         right_straight = right_straight[np.argsort(-right_straight[:, 5])]  # 按评分排序
+#                         pairs_length_middle[8:12] = right_straight[0, 0:4]
+#                         right_line = right_straight[0, 0:4]
+                        
+#                         right_distance = pairs[i][2] - right_line[0]
+                        
+#                         # 生成左侧引线（保持对称）
+#                         left_line = [
+#                             pairs[i][0] + abs(right_distance),
+#                             right_line[1],
+#                             pairs[i][0] + abs(right_distance),
+#                             right_line[3]
+#                         ]
+#                         pairs_length_middle[4:8] = left_line
+#                         print("根据右侧引线生成左侧引线（内向）")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs（内向）")
+#             #####
+#             # 在竖向标尺线的处理部分也加入对称性逻辑
+#             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
+#                 print("竖向")
+#                 up_straight = np.zeros((0, 6))  # 改为6列，存储[x1,y1,x2,y2,距离,评分]
+#                 down_straight = np.zeros((0, 6))
+#                 middle = np.zeros(6)
+                
+#                 for j in range(len(ver_lines_heng)):
+#                     # 使用评分函数计算上端引线
+#                     # 上端附近的直线
+#                     if pairs[i][1] - ratio_inside * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         print(">>> 进入上横线Y坐标条件")
+#                         print(ver_lines_heng[j])
+#                         # 创建临时竖直线表示，用于评分计算
+#                         # 对于竖直方向的箭头，我们需要转换为水平引线的评分
+#                         # 使用类似逻辑但方向不同
+#                         up_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=True)
+                        
+                        
+#                         if up_score > 0:
+#                             middle[0:4] = ver_lines_heng[j]
+#                             middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
+#                             middle[5] = up_score  # 存储评分
+#                             up_straight = np.r_[up_straight, [middle]]
+#                             print(f"内向竖pairs找到上横线，距离: {middle[4]}, 评分: {up_score}")
+ 
+#                     # 下端附近的直线
+#                     if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio_inside * (
+#                             pairs[i][3] - pairs[i][1]):
+#                         print(">>> 进入下横线Y坐标条件")
+#                         print(ver_lines_heng[j])
+#                         # 创建临时竖直线表示，用于评分计算
+#                         down_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=False)
+                        
+#                         if down_score > 0:
+#                             middle[0:4] = ver_lines_heng[j]
+#                             middle[4] = abs(pairs[i][3] - ver_lines_heng[j][1])
+#                             middle[5] = down_score  # 存储评分
+#                             down_straight = np.r_[down_straight, [middle]]
+#                             print(f"内向竖pairs找到下横线，距离: {middle[4]}, 评分: {down_score}")
+                
+#                 # 关键修改：寻找最对称的引线对
+#                 if len(up_straight) > 0 and len(down_straight) > 0:
+#                     # 检查是否可能是同一根线
+#                     same_line_detected = False
+                    
+#                     # 检查是否有完全相同的线在up_straight和down_straight中
+#                     for up_line in up_straight:
+#                         for down_line in down_straight:
+#                             if np.array_equal(up_line[0:4], down_line[0:4]):
+#                                 same_line_detected = True
+#                                 print("检测到同一根线被同时当作上引线和下引线")
+#                                 break
+#                         if same_line_detected:
+#                             break
+                    
+#                     if same_line_detected:
+#                         # 如果是同一根线，按照只有一侧有引线处理
+#                         print("检测到同一根线，按单侧引线处理")
+                        
+#                         # 选择评分更高的一侧
+#                         if up_straight[0][5] > down_straight[0][5]:
+#                             # 使用上引线
+#                             pairs_length_middle[0:4] = pairs[i, 0:4]
+#                             pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                             up_line = up_straight[0, 0:4]
+                            
+#                             up_distance = up_line[1] - pairs[i][1]
+                            
+#                             # 生成下侧引线（保持对称）
+#                             down_line = [
+#                                 up_line[0],
+#                                 pairs[i][3] - abs(up_distance),
+#                                 up_line[2],
+#                                 pairs[i][3] - abs(up_distance)
+#                             ]
+#                             pairs_length_middle[8:12] = down_line
+#                             print("使用上引线，生成下引线（对称生成）")
+#                         else:
+#                             # 使用下引线
+#                             pairs_length_middle[0:4] = pairs[i, 0:4]
+#                             pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                             down_line = down_straight[0, 0:4]
+                            
+#                             down_distance = pairs[i][3] - down_line[1]
+                            
+#                             # 生成上侧引线（保持对称）
+#                             up_line = [
+#                                 down_line[0],
+#                                 pairs[i][1] + abs(down_distance),
+#                                 down_line[2],
+#                                 pairs[i][1] + abs(down_distance)
+#                             ]
+#                             pairs_length_middle[4:8] = up_line
+#                             print("使用下引线，生成上引线（对称生成）")
+                        
+#                         pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                     else:
+#                         # 原有的对称性匹配逻辑
+#                         best_up_idx = 0
+#                         best_down_idx = 0
+#                         best_symmetry_score = float('inf')
+#                         best_combined_score = 0
+                        
+#                         # 限制搜索范围，取评分最高的前几个候选
+#                         up_candidates = up_straight[np.argsort(-up_straight[:, 5])[:3]]
+#                         down_candidates = down_straight[np.argsort(-down_straight[:, 5])[:3]]
+                        
+#                         for ui, up_line in enumerate(up_candidates):
+#                             for di, down_line in enumerate(down_candidates):
+#                                 # 计算对称性：上下引线到各自箭头的距离应该接近
+#                                 up_distance = up_line[1] - pairs[i][1]
+#                                 down_distance = pairs[i][3] - down_line[1]
+                                
+#                                 # 对称性评分：距离差的绝对值越小越好
+#                                 symmetry = abs(abs(up_distance) - abs(down_distance))
+                                
+#                                 # 综合评分：对称性 + 单个引线的评分
+#                                 combined_score = (up_line[5] + down_line[5]) * 0.5 - symmetry * 2
+                                
+#                                 if combined_score > best_combined_score:
+#                                     best_combined_score = combined_score
+#                                     best_up_idx = ui
+#                                     best_down_idx = di
+#                                     best_symmetry_score = symmetry
+                        
+#                         print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                        
+#                         pairs_length_middle[0:4] = pairs[i, 0:4]
+#                         pairs_length_middle[4:8] = up_candidates[best_up_idx, 0:4]
+#                         pairs_length_middle[8:12] = down_candidates[best_down_idx, 0:4]
+#                         pairs_length_middle[12] = abs(up_candidates[best_up_idx, 1] - down_candidates[best_down_idx, 1])
+#                         pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                         print("找到两条不同的引线，使用对称性最佳的配对")
+
+#                 elif len(up_straight) > 0 or len(down_straight) > 0:
+#                     # 只有一侧找到引线的处理（保持不变）
+#                     pairs_length_middle[0:4] = pairs[i, 0:4]
+                    
+#                     if len(up_straight) > 0:
+#                         # 按综合评分排序：距离和评分的加权
+#                         up_straight = up_straight[np.argsort(-up_straight[:, 5])]
+#                         pairs_length_middle[4:8] = up_straight[0, 0:4]
+#                         up_line = up_straight[0, 0:4]
+                        
+#                         up_distance = up_line[1] - pairs[i][1]
+                        
+#                         # 生成下侧引线（保持对称）
+#                         down_line = [
+#                             up_line[0],
+#                             pairs[i][3] - abs(up_distance),
+#                             up_line[2],
+#                             pairs[i][3] - abs(up_distance)
+#                         ]
+#                         pairs_length_middle[8:12] = down_line
+#                         print("根据上侧引线生成下侧引线（单侧引线）")
+                    
+#                     elif len(down_straight) > 0:
+#                         # 按综合评分排序
+#                         down_straight = down_straight[np.argsort(-down_straight[:, 5])]
+#                         pairs_length_middle[8:12] = down_straight[0, 0:4]
+#                         down_line = down_straight[0, 0:4]
+                        
+#                         down_distance = pairs[i][3] - down_line[1]
+                        
+#                         # 生成上侧引线（保持对称）
+#                         up_line = [
+#                             down_line[0],
+#                             pairs[i][1] + abs(down_distance),
+#                             down_line[2],
+#                             pairs[i][1] + abs(down_distance)
+#                         ]
+#                         pairs_length_middle[4:8] = up_line
+#                         print("根据下侧引线生成上侧引线（单侧引线）")
+                    
+#                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+#                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+#                 else:
+#                     print("没有找到任何引线，跳过这个pairs（内向）")
+        
+#         print("一组pairs结束*")
+    
+#     # 可视化部分保持不变
+#     if test_mode == 1:
+#         drawn_img = cv2.imread(img_path)
+#         for i in range(len(pairs_length)):
+#             x1 = int(pairs_length[i][4])
+#             x2 = int(pairs_length[i][6])
+#             y1 = int(pairs_length[i][5])
+#             y2 = int(pairs_length[i][7])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#             x1 = int(pairs_length[i][8])
+#             x2 = int(pairs_length[i][10])
+#             y1 = int(pairs_length[i][9])
+#             y2 = int(pairs_length[i][11])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#         for i in range(len(pairs_length)):
+#             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
+#             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
+#             point_color = (0, 0, 255)
+#             thickness = 2
+#             lineType = 8
+#             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+#         cv2.namedWindow("LSD", 0)
+#         cv2.imshow("LSD", drawn_img)
+#         cv2.waitKey(0)
+#         cv2.destroyAllWindows()
+#         print("视图结束**")
+    
+#     try:
+#         drawn_img = cv2.imread(img_path)
+#         for i in range(len(pairs_length)):
+#             x1 = int(pairs_length[i][4])
+#             x2 = int(pairs_length[i][6])
+#             y1 = int(pairs_length[i][5])
+#             y2 = int(pairs_length[i][7])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#             x1 = int(pairs_length[i][8])
+#             x2 = int(pairs_length[i][10])
+#             y1 = int(pairs_length[i][9])
+#             y2 = int(pairs_length[i][11])
+#             drawn_img = cv2.line(drawn_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+#         for i in range(len(pairs_length)):
+#             ptLeftTop = (int(pairs_length[i][0]), int(pairs_length[i][1]))
+#             ptRightBottom = (int(pairs_length[i][2]), int(pairs_length[i][3]))
+#             point_color = (0, 0, 255)
+#             thickness = 2
+#             lineType = 8
+#             cv2.rectangle(drawn_img, ptLeftTop, ptRightBottom, point_color, thickness, lineType)
+#         path = fr'{OPENCV_OUTPUT_LINE}/' + img_path[-7:]
+#         cv2.imwrite(path, drawn_img)
+#         print("保存引线+标尺线组合成功:", path)
+#     except:
+#         print("保存引线+标尺线组合失败")
+    
+#     print("***/结束引线和标尺线的匹配/***")
+#     pairs_length = remove_duplicate_pairs(pairs_length)
+#     pairs_length = remove_contained_arrows(pairs_length)
+#     return pairs_length
+
+########################继续#####################
+#o.O
 def find_pairs_length(img_path, pairs, test_mode):
     '''
     功能：检测标尺线附近成对的引线
@@ -999,12 +5515,13 @@ def find_pairs_length(img_path, pairs, test_mode):
     if img_path == f'{YOLO_DATA}/side.jpg' or img_path == f'{YOLO_DATA}/top.jpg':
         heng = h / 2
         shu = w / 2
-
+ 
     ver_lines_heng, ver_lines_shu = find_all_lines(img_path, test_mode)
-
+    # save_box_to_txt(ver_lines_heng, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_heng.txt")
+    # save_box_to_txt(ver_lines_shu, "D:\\BaiduNetdiskDownload\\post0\\0910\\data\\ver_lines_shu.txt")
     pairs_length = np.zeros((0, 13))  # 存储pairs以及所表示的距离
     pairs_length_middle = np.zeros(13)
-
+ 
     # 横向直线的坐标排列np.二维数组[x1,y1,x2,y2]改为x1<x2 y1<y2
     new_ver_lines = np.zeros((0, 4))
     for i in range(len(ver_lines_heng)):
@@ -1036,103 +5553,356 @@ def find_pairs_length(img_path, pairs, test_mode):
     def calculate_match_score_simple(arrow_pair, line, heng, is_left=True, is_top=None):
         """
         简化版匹配评分，支持水平和竖直方向
-        分数越高表示匹配越好
-        
-        参数:
-        - arrow_pair: 箭头对 [x1,y1,x2,y2,type]
-        - line: 引线 [x1,y1,x2,y2]
-        - heng: 水平中心线
-        - is_left: 是否为左/上侧引线（水平方向）
-        - is_top: 是否为上侧引线（竖直方向）
+        箭头方向通过arrow_pair[4]判断：0 = outside（外向），1 = inside（内向）
         """
         score = 0
         
         # 判断是水平箭头还是竖直箭头
-        is_horizontal = (arrow_pair[2] - arrow_pair[0]) > (arrow_pair[3] - arrow_pair[1])
+        arrow_width = arrow_pair[2] - arrow_pair[0]
+        arrow_height = arrow_pair[3] - arrow_pair[1]
+        is_horizontal = arrow_width > arrow_height
+        
+        # 判断line是水平还是竖直
+        line_width = line[2] - line[0]
+        line_height = line[3] - line[1]
+        line_is_horizontal = line_width > line_height
+        
+        # 获取箭头方向
+        arrow_direction = arrow_pair[4]  # 0 = 外向, 1 = 内向
         
         if is_horizontal:
-            # 水平箭头处理
-            arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
-            line_y_center = (line[1] + line[3]) / 2
-            line_y_range = line[3] - line[1]
-            arrow_y_range = arrow_pair[3] - arrow_pair[1]
+            # 水平箭头处理 - 期望竖直引线
+            if line_is_horizontal:
+                return -1000
+                
+            # 获取箭头关键坐标
+            arrow_left = arrow_pair[0]
+            arrow_right = arrow_pair[2]
+            arrow_center_x = (arrow_left + arrow_right) / 2
+            line_x = line[0]  # 竖直线段的x坐标
             
             # 计算y方向重叠
             y_overlap_start = max(arrow_pair[1], line[1])
             y_overlap_end = min(arrow_pair[3], line[3])
             y_overlap = max(0, y_overlap_end - y_overlap_start)
             
+            # ============ 关键修改1：增加y方向重叠检查 ============
+            # 对于内向箭头，y方向必须有足够的重叠
+            if arrow_direction == 1:  # 内向箭头
+                if y_overlap < 5:  # 至少5像素重叠
+                    return -1000
+                
+                # 计算重叠比例
+                overlap_ratio_y = y_overlap / max(arrow_height, 1)
+                
+                # 如果重叠比例太小，直接拒绝
+                if overlap_ratio_y < 0.2:  # 至少20%重叠
+                    return -1000
+            
             # 如果完全没有重叠，检查距离是否在可接受范围内
             if y_overlap == 0:
-                # 计算最近距离
                 y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
-                if y_distance > 3 * arrow_y_range:  # 距离超过3倍箭头高度
-                    return -1000  # 完全不匹配
+                if y_distance > 3 * arrow_height:
+                    return -1000
             
-            # 2. 水平距离评分 - 这是最重要的因素
-            if is_left:
-                x_distance = abs(line[0] - arrow_pair[0])
-            else:
-                x_distance = abs(line[0] - arrow_pair[2])
+            # 判断引线是否在箭头x范围内（水平方向）
+            is_inside_arrow = arrow_left <= line_x <= arrow_right
             
-            # 距离越小分数越高
-            if x_distance <= 50:
-                score = 100 * (1 - x_distance / 50)
-            else:
-                score = max(0, 10 * (1 - x_distance / 100))
+            # 根据箭头方向采用不同的评分策略
+            if arrow_direction == 1:  # 内向箭头
+                # 内向水平箭头：优先选择箭头内部对称的引线
+                if is_inside_arrow:
+                    # 在箭头内部 - 这是理想情况
+                    
+                    # 计算距离中心的距离
+                    center_distance = abs(line_x - arrow_center_x)
+                    center_distance_ratio = center_distance / (arrow_width / 2)
+                    
+                    # 距离中心越近分数越高
+                    if center_distance_ratio <= 1.0:
+                        base_score = 100 * (1 - center_distance_ratio)
+                    else:
+                        # 虽然在内部但超过半宽，分数降低
+                        base_score = 50 * (1 - center_distance_ratio)
+                    
+                    # ============ 关键修改2：增加y方向重叠奖励 ============
+                    # 重叠奖励（重要！）
+                    overlap_bonus_y = 50 * (y_overlap / max(arrow_height, 1))
+                    
+                    score = base_score + overlap_bonus_y
+                    
+                    # 额外奖励：非常接近中点
+                    if center_distance < arrow_width * 0.1:
+                        score += 40
+                    elif center_distance < arrow_width * 0.25:
+                        score += 20
+                        
+                    # 额外奖励：垂直方向对齐良好
+                    arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+                    line_y_center = (line[1] + line[3]) / 2
+                    if abs(arrow_y_center - line_y_center) < arrow_height * 0.3:
+                        score += 20
+                        
+                    # ============ 关键修改3：惩罚重叠不足的情况 ============
+                    if y_overlap / max(arrow_height, 1) < 0.5:  # 重叠小于50%
+                        score *= (0.5 + y_overlap / max(arrow_height, 1))  # 0.5-1.0的系数
+                        
+                else:
+                    # 不在箭头内部 - 这是次要选择
+                    edge_distance = min(abs(line_x - arrow_left), abs(line_x - arrow_right))
+                    edge_distance_ratio = edge_distance / arrow_width
+                    
+                    if edge_distance_ratio <= 1.0:
+                        base_score = 60 * (1 - edge_distance_ratio)
+                    else:
+                        base_score = max(0, 30 * (1 - edge_distance_ratio))
+                    
+                    # 重叠奖励
+                    overlap_bonus_y = 30 * (y_overlap / max(arrow_height, 1))
+                    
+                    score = base_score + overlap_bonus_y
+                    
+                    # 外部引线惩罚
+                    score *= 0.7
+                    
+            else:  # 外向箭头
+                # 外向水平箭头：只需要找箭头附近最近的引线
+                distance_to_left = abs(line_x - arrow_left)
+                distance_to_right = abs(line_x - arrow_right)
+                min_distance = min(distance_to_left, distance_to_right)
+                
+                distance_ratio = min_distance / arrow_width
+                
+                # 距离越近越好
+                if distance_ratio <= 1.0:
+                    base_score = 100 * (1 - distance_ratio)
+                elif distance_ratio <= 2.0:
+                    base_score = 70 * (1 - (distance_ratio - 1.0))
+                else:
+                    base_score = max(0, 30 * (1 - distance_ratio / 3))
+                
+                # 重叠奖励
+                overlap_bonus_y = 20 * (y_overlap / max(arrow_height, 1))
+                
+                score = base_score + overlap_bonus_y
+                
+                # 如果指定了方向（左/右），检查是否符合
+                if is_left is not None:
+                    if is_left:
+                        # 期望引线在箭头左侧
+                        if line_x < arrow_left:
+                            score += 15
+                        elif line_x > arrow_right:
+                            score *= 0.8
+                    else:
+                        # 期望引线在箭头右侧
+                        if line_x > arrow_right:
+                            score += 15
+                        elif line_x < arrow_left:
+                            score *= 0.8
             
-            # 3. 重叠奖励
+            # ============ 关键修改4：重新设计重叠奖励 ============
+            # y方向重叠奖励
             if y_overlap > 0:
-                overlap_ratio = y_overlap / min(arrow_y_range, line_y_range)
-                score += 20 * overlap_ratio
+                # 计算重叠比例
+                overlap_ratio_y = y_overlap / min(arrow_height, line_height)
+                
+                # 根据重叠比例给予奖励
+                if overlap_ratio_y >= 0.7:
+                    score += 40
+                elif overlap_ratio_y >= 0.5:
+                    score += 25
+                elif overlap_ratio_y >= 0.3:
+                    score += 15
+                else:
+                    score += 5
+            else:
+                if y_overlap == 0:
+                    y_distance = min(abs(arrow_pair[1] - line[3]), abs(arrow_pair[3] - line[1]))
+                    if y_distance < arrow_height:
+                        score += 10 * (1 - y_distance / arrow_height)
             
-            # 4. Y方向中心对齐奖励
-            center_diff = abs(arrow_y_center - line_y_center)
-            if center_diff < 30:
-                score += 10 * (1 - center_diff / 30)
-        
+            # Y方向中心对齐奖励
+            arrow_y_center = (arrow_pair[1] + arrow_pair[3]) / 2
+            line_y_center = (line[1] + line[3]) / 2
+            center_diff_y = abs(arrow_y_center - line_y_center)
+            if center_diff_y < arrow_height:
+                score += 10 * (1 - center_diff_y / arrow_height)
+            
         else:
-            # 竖直箭头处理
-            arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
-            line_x_center = (line[0] + line[2]) / 2
-            line_x_range = abs(line[2] - line[0])
-            arrow_x_range = abs(arrow_pair[2] - arrow_pair[0])
+            # 竖直箭头处理 - 期望水平引线
+            if not line_is_horizontal:
+                return -1000
+                
+            # 现在line是水平横线
+            line_y = line[1]  # 水平横线的y坐标
+            arrow_top = arrow_pair[1]
+            arrow_bottom = arrow_pair[3]
+            arrow_center_y = (arrow_top + arrow_bottom) / 2
             
             # 计算x方向重叠
             x_overlap_start = max(arrow_pair[0], line[0])
             x_overlap_end = min(arrow_pair[2], line[2])
             x_overlap = max(0, x_overlap_end - x_overlap_start)
             
+            # ============ 关键修改5：增加x方向重叠检查 ============
+            # 对于内向箭头，x方向必须有足够的重叠
+            if arrow_direction == 1:  # 内向箭头
+                if x_overlap < 5:  # 至少5像素重叠
+                    return -1000
+                
+                # 计算重叠比例
+                overlap_ratio_x = x_overlap / max(arrow_width, 1)
+                
+                # 如果重叠比例太小，直接拒绝
+                if overlap_ratio_x < 0.2:  # 至少20%重叠
+                    return -1000
+            
             # 如果完全没有重叠，检查距离是否在可接受范围内
             if x_overlap == 0:
-                # 计算最近距离
                 x_distance = min(abs(arrow_pair[0] - line[2]), abs(arrow_pair[2] - line[0]))
-                if x_distance > 3 * arrow_x_range:  # 距离超过3倍箭头宽度
-                    return -1000  # 完全不匹配
+                if x_distance > 3 * arrow_width:
+                    return -1000
             
-            # 2. 竖直距离评分
-            if is_top:
-                y_distance = abs(line[1] - arrow_pair[1])
-            else:
-                y_distance = abs(line[1] - arrow_pair[3])
+            # 判断引线是否在箭头y范围内
+            is_inside_arrow = arrow_top <= line_y <= arrow_bottom
             
-            # 距离越小分数越高
-            if y_distance <= 50:
-                score = 100 * (1 - y_distance / 50)
-            else:
-                score = max(0, 10 * (1 - y_distance / 100))
+            # 根据箭头方向采用不同的评分策略
+            if arrow_direction == 1:  # 内向箭头
+                # 内向竖直箭头：优先选择箭头内部对称的引线
+                if is_inside_arrow:
+                    # 在箭头内部 - 这是理想情况
+                    
+                    # 计算距离中心的距离
+                    center_distance = abs(line_y - arrow_center_y)
+                    center_distance_ratio = center_distance / (arrow_height / 2)
+                    
+                    # 距离中心越近分数越高
+                    if center_distance_ratio <= 1.0:
+                        base_score = 100 * (1 - center_distance_ratio)
+                    else:
+                        # 虽然在内部但超过半高，分数降低
+                        base_score = 50 * (1 - center_distance_ratio)
+                    
+                    # ============ 关键修改6：增加x方向重叠奖励 ============
+                    # 重叠奖励（重要！）
+                    overlap_bonus_x = 50 * (x_overlap / max(arrow_width, 1))
+                    
+                    score = base_score + overlap_bonus_x
+                    
+                    # 额外奖励：非常接近中点
+                    if center_distance < arrow_height * 0.1:
+                        score += 40
+                    elif center_distance < arrow_height * 0.25:
+                        score += 20
+                        
+                    # 额外奖励：水平方向对齐良好
+                    arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
+                    line_x_center = (line[0] + line[2]) / 2
+                    if abs(arrow_x_center - line_x_center) < arrow_width * 0.3:
+                        score += 20
+                        
+                    # ============ 关键修改7：惩罚重叠不足的情况 ============
+                    if x_overlap / max(arrow_width, 1) < 0.5:  # 重叠小于50%
+                        score *= (0.5 + x_overlap / max(arrow_width, 1))  # 0.5-1.0的系数
+                        
+                else:
+                    # 不在箭头内部 - 这是次要选择
+                    edge_distance = min(abs(line_y - arrow_top), abs(line_y - arrow_bottom))
+                    edge_distance_ratio = edge_distance / arrow_height
+                    
+                    if edge_distance_ratio <= 1.0:
+                        base_score = 60 * (1 - edge_distance_ratio)
+                    else:
+                        base_score = max(0, 30 * (1 - edge_distance_ratio))
+                    
+                    # 重叠奖励
+                    overlap_bonus_x = 30 * (x_overlap / max(arrow_width, 1))
+                    
+                    score = base_score + overlap_bonus_x
+                    
+                    # 外部引线惩罚
+                    score *= 0.7
+                    
+            else:  # 外向箭头
+                # 外向竖直箭头：只需要找箭头附近最近的引线
+                distance_to_top = abs(line_y - arrow_top)
+                distance_to_bottom = abs(line_y - arrow_bottom)
+                min_distance = min(distance_to_top, distance_to_bottom)
+                
+                distance_ratio = min_distance / arrow_height
+                
+                # 距离越近越好
+                if distance_ratio <= 1.0:
+                    base_score = 100 * (1 - distance_ratio)
+                elif distance_ratio <= 2.0:
+                    base_score = 70 * (1 - (distance_ratio - 1.0))
+                else:
+                    base_score = max(0, 30 * (1 - distance_ratio / 3))
+                
+                # 重叠奖励
+                overlap_bonus_x = 20 * (x_overlap / max(arrow_width, 1))
+                
+                score = base_score + overlap_bonus_x
+                
+                # 如果指定了方向（上/下），检查是否符合
+                if is_top is not None:
+                    if is_top:
+                        # 期望上横线
+                        if line_y < arrow_top:
+                            score += 15
+                        elif line_y > arrow_bottom:
+                            score *= 0.8
+                    else:
+                        # 期望下横线
+                        if line_y > arrow_bottom:
+                            score += 15
+                        elif line_y < arrow_top:
+                            score *= 0.8
             
-            # 3. 重叠奖励
+            # ============ 关键修改8：重新设计重叠奖励 ============
+            # x方向重叠奖励
             if x_overlap > 0:
-                overlap_ratio = x_overlap / min(arrow_x_range, line_x_range)
-                score += 20 * overlap_ratio
+                # 计算重叠比例
+                overlap_ratio_x = x_overlap / min(arrow_width, line_width)
+                
+                # 根据重叠比例给予奖励
+                if overlap_ratio_x >= 0.7:
+                    score += 40
+                elif overlap_ratio_x >= 0.5:
+                    score += 25
+                elif overlap_ratio_x >= 0.3:
+                    score += 15
+                else:
+                    score += 5
+            else:
+                if x_overlap == 0:
+                    x_distance = min(abs(arrow_pair[0] - line[2]), abs(arrow_pair[2] - line[0]))
+                    if x_distance < arrow_width:
+                        score += 10 * (1 - x_distance / arrow_width)
             
-            # 4. X方向中心对齐奖励
-            center_diff = abs(arrow_x_center - line_x_center)
-            if center_diff < 30:
-                score += 10 * (1 - center_diff / 30)
+            # X方向中心对齐奖励
+            arrow_x_center = (arrow_pair[0] + arrow_pair[2]) / 2
+            line_x_center = (line[0] + line[2]) / 2
+            center_diff_x = abs(arrow_x_center - line_x_center)
+            if center_diff_x < arrow_width:
+                score += 10 * (1 - center_diff_x / arrow_width)
         
-        return score
+        # 引线长度合理性检查
+        line_length = max(line_width, line_height)
+        if is_horizontal:
+            arrow_length = arrow_width
+        else:
+            arrow_length = arrow_height
+        
+        length_ratio = line_length / max(arrow_length, 1)
+        if 0.5 <= length_ratio <= 3.0:
+            score += 10
+        elif length_ratio > 5.0:
+            score *= 0.8
+        
+        # 确保分数不为负
+        return max(0, score)
     
     ratio = 0.4
     ra = 2
@@ -1145,95 +5915,134 @@ def find_pairs_length(img_path, pairs, test_mode):
         print(f'开始{pairs[i]}判断')
         print(f'横{heng}')
         print(f'竖{shu}')
-        
+        ########
         if pairs[i][4] == 0:  # 外向标尺线
             print("外向")
-            ratio = 0.3  # 增加ratio，让搜索范围更大
-            
+            #####
             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
                 print("横向")
                 left_straight = np.zeros((0, 6))  # 增加一列存储评分
                 right_straight = np.zeros((0, 6))
                 middle = np.zeros(6)
                 
+                # 计算箭头的左右端点
+                arrow_left = pairs[i][0]
+                arrow_right = pairs[i][2]
+                arrow_height = pairs[i][3] - pairs[i][1]
+                
                 for j in range(len(ver_lines_shu)):
-                    # 简化：主要根据水平距离匹配
-                    left_distance = abs(ver_lines_shu[j][0] - pairs[i][0])
-                    right_distance = abs(ver_lines_shu[j][0] - pairs[i][2])
+                    line_x = ver_lines_shu[j][0]  # 竖线的x坐标
                     
-                    # 左引线匹配条件
-                    if left_distance < 50:  # 距离小于50像素
-                        # 检查Y方向是否有重叠或接近
-                        y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
-                        y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
-                        y_overlap = max(0, y_overlap_end - y_overlap_start)
+                    # 计算到左右端点的距离（不考虑方向，只计算绝对值）
+                    distance_to_left = abs(line_x - arrow_left)
+                    distance_to_right = abs(line_x - arrow_right)
+                    
+                    # 检查Y方向是否有足够重叠
+                    y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
+                    y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
+                    y_overlap = max(0, y_overlap_end - y_overlap_start)
+                    
+                    # 需要有一定y方向重叠
+                    if y_overlap > arrow_height * 0.3 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
+                                                            abs(pairs[i][3] - ver_lines_shu[j][1])) < arrow_height * 0.2:
                         
-                        if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
-                                                abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
-                            # 计算简化评分
+                        # 判断这条线更适合作为左引线还是右引线
+                        if distance_to_left < distance_to_right:
+                            # 更适合作为左引线
                             left_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=True)
                             
                             if left_score > 0:
                                 middle[0:4] = ver_lines_shu[j]
-                                middle[4] = left_distance  # 存储距离
+                                middle[4] = distance_to_left  # 存储距离
                                 middle[5] = left_score  # 存储评分
                                 left_straight = np.r_[left_straight, [middle]]
-                                print(f"外向横pairs找到左竖线，距离: {left_distance}, 评分: {left_score}")
-                    
-                    # 右引线匹配条件
-                    if right_distance < 50:  # 距离小于50像素
-                        # 检查Y方向是否有重叠或接近
-                        y_overlap_start = max(pairs[i][1], ver_lines_shu[j][1])
-                        y_overlap_end = min(pairs[i][3], ver_lines_shu[j][3])
-                        y_overlap = max(0, y_overlap_end - y_overlap_start)
-                        
-                        if y_overlap > 0 or min(abs(pairs[i][1] - ver_lines_shu[j][3]), 
-                                                abs(pairs[i][3] - ver_lines_shu[j][1])) < 20:
-                            # 计算简化评分
+                                print(f"外向横pairs找到左竖线，距离: {distance_to_left}, 评分: {left_score}")
+                        else:
+                            # 更适合作为右引线
                             right_score = calculate_match_score_simple(pairs[i], ver_lines_shu[j], heng, is_left=False)
                             
                             if right_score > 0:
                                 middle[0:4] = ver_lines_shu[j]
-                                middle[4] = right_distance  # 存储距离
+                                middle[4] = distance_to_right  # 存储距离
                                 middle[5] = right_score  # 存储评分
                                 right_straight = np.r_[right_straight, [middle]]
-                                print(f"外向横pairs找到右竖线，距离: {right_distance}, 评分: {right_score}")
+                                print(f"外向横pairs找到右竖线，距离: {distance_to_right}, 评分: {right_score}")
                 
-                # 按距离从小到大排序（主要排序依据），距离相同再按评分排序
+                # === 只需要排序一次 ===
                 if len(left_straight) > 0:
-                    # 先按距离排序，距离小的在前
                     left_straight = left_straight[np.argsort(left_straight[:, 4])]
-                    # 如果前几个距离相同，再按评分排序
-                    # 简单实现：取距离最小的几个，再按评分排序
-                    min_distance = left_straight[0, 4]
-                    same_distance_indices = np.where(left_straight[:, 4] <= min_distance + 1)[0]
-                    if len(same_distance_indices) > 1:
-                        # 对距离相同的部分按评分排序
-                        same_distance_lines = left_straight[same_distance_indices]
-                        same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
-                        left_straight[same_distance_indices] = same_distance_lines
+                    print(f"选择左引线：距离={left_straight[0, 4]}")
                 
                 if len(right_straight) > 0:
-                    # 先按距离排序，距离小的在前
                     right_straight = right_straight[np.argsort(right_straight[:, 4])]
-                    # 如果前几个距离相同，再按评分排序
-                    min_distance = right_straight[0, 4]
-                    same_distance_indices = np.where(right_straight[:, 4] <= min_distance + 1)[0]
-                    if len(same_distance_indices) > 1:
-                        # 对距离相同的部分按评分排序
-                        same_distance_lines = right_straight[same_distance_indices]
-                        same_distance_lines = same_distance_lines[np.argsort(-same_distance_lines[:, 5])]
-                        right_straight[same_distance_indices] = same_distance_lines
+                    print(f"选择右引线：距离={right_straight[0, 4]}")
                 
                 # 根据找到的引线数量处理
                 if len(left_straight) > 0 and len(right_straight) > 0:
-                    # 找到两条引线，直接使用距离最小的
-                    pairs_length_middle[0:4] = pairs[i, 0:4]
-                    pairs_length_middle[4:8] = left_straight[0, 0:4]
-                    pairs_length_middle[8:12] = right_straight[0, 0:4]
-                    pairs_length_middle[12] = abs(left_straight[0, 0] - right_straight[0, 0])
-                    pairs_length = np.r_[pairs_length, [pairs_length_middle]]
-                    print(f"找到两条引线，左距离: {left_straight[0, 4]}, 右距离: {right_straight[0, 4]}")
+                    # === 新增：判断两条引线距离差是否过大 ===
+                    left_distance = left_straight[0, 4]  # 左引线到左箭头的距离
+                    right_distance = right_straight[0, 4]  # 右引线到右箭头的距离
+                    
+                    print(f"找到两条引线：左距离={left_distance}, 右距离={right_distance}")
+                    
+                    # 计算两条引线与各自对应端点的距离差
+                    distance_diff = abs(left_distance - right_distance)
+                    
+                    if distance_diff > 20:  # 距离差大于20像素，判定为不一致
+                        print(f"两条引线距离差过大({distance_diff}>20)，进行判断...")
+                        
+                        # 判断哪条引线距离更合理（通常距离应该相近）
+                        # 这里可以结合评分进行综合判断
+                        left_score_val = left_straight[0, 5]
+                        right_score_val = right_straight[0, 5]
+                        
+                        # 综合判断：考虑距离和评分
+                        # 方法1：选择距离更小的（通常更可靠）
+                        if left_distance < right_distance:
+                            # 保留左引线，认为右引线错误
+                            print(f"左引线距离更小({left_distance}<{right_distance})，保留左引线，重新生成右引线")
+                            
+                            pairs_length_middle[0:4] = pairs[i, 0:4]
+                            pairs_length_middle[4:8] = left_straight[0, 0:4]
+                            left_line = left_straight[0, 0:4]
+                            
+                            # 生成右侧引线（与左侧对称）
+                            right_line = [
+                                pairs[i][2] - abs(left_distance),  # 保持与左侧对称的距离
+                                left_line[1],  # y1 - 保持与左侧引线相同的高度
+                                pairs[i][2] - abs(left_distance),  # x2 - 保持与左侧对称的距离
+                                left_line[3]   # y2 - 保持与左侧引线相同的高度
+                            ]
+                            pairs_length_middle[8:12] = right_line
+                        else:
+                            # 保留右引线，认为左引线错误
+                            print(f"右引线距离更小({right_distance}<{left_distance})，保留右引线，重新生成左引线")
+                            
+                            pairs_length_middle[0:4] = pairs[i, 0:4]
+                            pairs_length_middle[8:12] = right_straight[0, 0:4]
+                            right_line = right_straight[0, 0:4]
+                            
+                            # 生成左侧引线（与右侧对称）
+                            left_line = [
+                                pairs[i][0] + abs(right_distance),  # 保持与右侧对称的距离
+                                right_line[1],  # y1 - 保持与右侧引线相同的高度
+                                pairs[i][0] + abs(right_distance),  # x2 - 保持与右侧对称的距离
+                                right_line[3]   # y2 - 保持与右侧引线相同的高度
+                            ]
+                            pairs_length_middle[4:8] = left_line
+                            
+                        pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+                        pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+                        
+                    else:
+                        # 距离差在可接受范围内，直接使用两条引线
+                        print(f"两条引线距离差可接受({distance_diff}<=50)，直接使用")
+                        pairs_length_middle[0:4] = pairs[i, 0:4]
+                        pairs_length_middle[4:8] = left_straight[0, 0:4]
+                        pairs_length_middle[8:12] = right_straight[0, 0:4]
+                        pairs_length_middle[12] = abs(left_straight[0, 0] - right_straight[0, 0])
+                        pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+                        print(f"找到两条引线，左距离: {left_distance}, 右距离: {right_distance}")
                 elif len(left_straight) > 0 or len(right_straight) > 0:
                     # 只找到一条引线，生成另一条
                     pairs_length_middle[0:4] = pairs[i, 0:4]
@@ -1284,50 +6093,123 @@ def find_pairs_length(img_path, pairs, test_mode):
             # 竖向标尺线的处理类似
             if (pairs[i][2] - pairs[i][0]) < (pairs[i][3] - pairs[i][1]):  # 竖向标尺线
                 print("竖向")
-                up_straight = np.zeros((0, 5))
-                down_straight = np.zeros((0, 5))
-                middle = np.zeros((5))
+                up_straight = np.zeros((0, 6))  # 改为6列
+                down_straight = np.zeros((0, 6))  # 改为6列
+                middle = np.zeros(6)  # 改为6列
+                
+                # 计算箭头的上下端点
+                arrow_top = pairs[i][1]
+                arrow_bottom = pairs[i][3]
+                arrow_width = pairs[i][2] - pairs[i][0]
                 
                 for j in range(len(ver_lines_heng)):
-                    # 上端附近的直线
-                    if pairs[i][1] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
-                            pairs[i][3] - pairs[i][1]):
-                        if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
-                                abs(pairs[i][0] - ver_lines_heng[j][2]),
-                                abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
-                                pairs[i][2] - pairs[i][0]):
-                            if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
-                                    pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
+                    line_y = ver_lines_heng[j][1]  # 横线的y坐标
+                    
+                    # 计算到上下端点的距离（不考虑方向，只计算绝对值）
+                    distance_to_top = abs(line_y - arrow_top)
+                    distance_to_bottom = abs(line_y - arrow_bottom)
+                    
+                    # 检查X方向是否有重叠
+                    x_overlap_start = max(pairs[i][0], ver_lines_heng[j][0])
+                    x_overlap_end = min(pairs[i][2], ver_lines_heng[j][2])
+                    x_overlap = max(0, x_overlap_end - x_overlap_start)
+                    
+                    # 需要有一定x方向重叠
+                    if x_overlap > arrow_width * 0.3 or min(abs(pairs[i][0] - ver_lines_heng[j][2]), 
+                                                            abs(pairs[i][2] - ver_lines_heng[j][0])) < arrow_width * 0.2:
+                        
+                        # 判断这条线更适合作为上引线还是下引线
+                        # 规则：离哪个端点更近，就作为哪个方向的引线
+                        if distance_to_top < distance_to_bottom:
+                            # 更适合作为上引线
+                            up_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=True)
+                            
+                            if up_score > 0:
                                 middle[0:4] = ver_lines_heng[j]
-                                middle[4] = abs(pairs[i][1] - ver_lines_heng[j][1])
+                                middle[4] = distance_to_top  # 存储距离
+                                middle[5] = up_score  # 存储评分
                                 up_straight = np.r_[up_straight, [middle]]
-                                print("外向竖pairs找到上横线")
-
-                    # 下端附近的直线
-                    if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio * (
-                            pairs[i][3] - pairs[i][1]):
-                        if (not (pairs[i][0] > ver_lines_heng[j][2] or pairs[i][2] < ver_lines_heng[j][0])) or min(
-                                abs(pairs[i][0] - ver_lines_heng[j][2]),
-                                abs(pairs[i][2] - ver_lines_heng[j][0])) < ra * (
-                                pairs[i][2] - pairs[i][0]):
-                            if (pairs[i][0] > shu and ver_lines_heng[j][0] < pairs[i][0]) or (
-                                    pairs[i][0] < shu and ver_lines_heng[j][2] > pairs[i][2]):
+                                print(f"外向竖pairs找到上横线，距离: {distance_to_top}, 评分: {up_score}")
+                        else:
+                            # 更适合作为下引线
+                            down_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=False)
+                            
+                            if down_score > 0:
                                 middle[0:4] = ver_lines_heng[j]
-                                middle[4] = abs(pairs[i][0] - ver_lines_heng[j][0])
+                                middle[4] = distance_to_bottom  # 存储距离
+                                middle[5] = down_score  # 存储评分
                                 down_straight = np.r_[down_straight, [middle]]
-                                print("外向竖pairs找到下横线")
+                                print(f"外向竖pairs找到下横线，距离: {distance_to_bottom}, 评分: {down_score}")
                 
-                up_straight = up_straight[np.argsort(up_straight[:, 4])]
-                down_straight = down_straight[np.argsort(down_straight[:, 4])]
+                # 按距离从小到大排序
+                if len(up_straight) > 0:
+                    up_straight = up_straight[np.argsort(up_straight[:, 4])]
+                    print(f"选择上引线：距离={up_straight[0, 4]}")
                 
-                # 修改：根据找到的引线数量处理
+                if len(down_straight) > 0:
+                    down_straight = down_straight[np.argsort(down_straight[:, 4])]
+                    print(f"选择下引线：距离={down_straight[0, 4]}")
+                
+                # 根据找到的引线数量处理
                 if len(up_straight) > 0 and len(down_straight) > 0:
-                    pairs_length_middle[0:4] = pairs[i, 0:4]
-                    pairs_length_middle[4:8] = up_straight[0, 0:4]
-                    pairs_length_middle[8:12] = down_straight[0, 0:4]
-                    pairs_length_middle[12] = abs(up_straight[0, 1] - down_straight[0, 1])
-                    pairs_length = np.r_[pairs_length, [pairs_length_middle]]
-                    print("找到两条引线，直接使用")
+                    # === 新增：竖向标尺线的距离差判断 ===
+                    up_distance = up_straight[0, 4]  # 上引线到上箭头的距离
+                    down_distance = down_straight[0, 4]  # 下引线到下箭头的距离
+                    
+                    print(f"找到两条引线：上距离={up_distance}, 下距离={down_distance}")
+                    
+                    # 计算两条引线与各自对应端点的距离差
+                    distance_diff = abs(up_distance - down_distance)
+                    
+                    if distance_diff > 20:  # 距离差大于20像素，判定为不一致
+                        print(f"两条引线距离差过大({distance_diff}>20)，进行判断...")
+                        
+                        # 判断哪条引线距离更合理
+                        if up_distance < down_distance:
+                            # 保留上引线，认为下引线错误
+                            print(f"上引线距离更小({up_distance}<{down_distance})，保留上引线，重新生成下引线")
+                            
+                            pairs_length_middle[0:4] = pairs[i, 0:4]
+                            pairs_length_middle[4:8] = up_straight[0, 0:4]
+                            up_line = up_straight[0, 0:4]
+                            
+                            # 生成下侧引线（与上侧对称）
+                            down_line = [
+                                up_line[0],
+                                pairs[i][3] - abs(up_distance),  # 保持与上侧对称的距离
+                                up_line[2],
+                                pairs[i][3] - abs(up_distance)
+                            ]
+                            pairs_length_middle[8:12] = down_line
+                        else:
+                            # 保留下引线，认为上引线错误
+                            print(f"下引线距离更小({down_distance}<{up_distance})，保留下引线，重新生成上引线")
+                            
+                            pairs_length_middle[0:4] = pairs[i, 0:4]
+                            pairs_length_middle[8:12] = down_straight[0, 0:4]
+                            down_line = down_straight[0, 0:4]
+                            
+                            # 生成上侧引线（与下侧对称）
+                            up_line = [
+                                down_line[0],
+                                pairs[i][1] + abs(down_distance),  # 保持与下侧对称的距离
+                                down_line[2],
+                                pairs[i][1] + abs(down_distance)
+                            ]
+                            pairs_length_middle[4:8] = up_line
+                            
+                        pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+                        pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+                        
+                    else:
+                        # 距离差在可接受范围内，直接使用两条引线
+                        print(f"两条引线距离差可接受({distance_diff}<=50)，直接使用")
+                        pairs_length_middle[0:4] = pairs[i, 0:4]
+                        pairs_length_middle[4:8] = up_straight[0, 0:4]
+                        pairs_length_middle[8:12] = down_straight[0, 0:4]
+                        pairs_length_middle[12] = abs(up_straight[0, 1] - down_straight[0, 1])
+                        pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+                        print("找到两条引线，直接使用")
                 elif len(up_straight) > 0 or len(down_straight) > 0:
                     pairs_length_middle[0:4] = pairs[i, 0:4]
                     
@@ -1372,7 +6254,7 @@ def find_pairs_length(img_path, pairs, test_mode):
         # 在内向标尺线的处理部分添加对称性逻辑
         if pairs[i][4] == 1:  # 内向标尺线
             print("内向")
-            ratio = 0.5
+            ratio = 0.8
             ratio_inside = 0.15
             
             if (pairs[i][2] - pairs[i][0]) > (pairs[i][3] - pairs[i][1]):  # 横向标尺线
@@ -1395,7 +6277,7 @@ def find_pairs_length(img_path, pairs, test_mode):
                             middle[5] = left_score  # 存储评分
                             left_straight = np.r_[left_straight, [middle]]
                             print(f"内向横pairs找到左竖线，距离: {middle[4]}, 评分: {left_score}")
-
+ 
                     # 右端附近的直线
                     if pairs[i][2] - ratio * (pairs[i][2] - pairs[i][0]) < ver_lines_shu[j][0] < pairs[i][2] + ratio_inside * (pairs[i][2] - pairs[i][0]):
                         # 计算简化评分
@@ -1410,42 +6292,99 @@ def find_pairs_length(img_path, pairs, test_mode):
                 
                 # 关键修改：寻找最对称的引线对
                 if len(left_straight) > 0 and len(right_straight) > 0:
-                    best_left_idx = 0
-                    best_right_idx = 0
-                    best_symmetry_score = float('inf')
-                    best_combined_score = 0
+                    # 检查是否可能是同一根线
+                    same_line_detected = False
                     
-                    # 限制搜索范围，取评分最高的前几个候选
-                    left_candidates = left_straight[np.argsort(-left_straight[:, 5])[:3]]  # 取评分最高的3个
-                    right_candidates = right_straight[np.argsort(-right_straight[:, 5])[:3]]  # 取评分最高的3个
+                    # 检查是否有完全相同的线在left_straight和right_straight中
+                    for left_line in left_straight:
+                        for right_line in right_straight:
+                            if np.array_equal(left_line[0:4], right_line[0:4]):
+                                same_line_detected = True
+                                print("检测到同一根线被同时当作左引线和右引线")
+                                break
+                        if same_line_detected:
+                            break
                     
-                    for li, left_line in enumerate(left_candidates):
-                        for ri, right_line in enumerate(right_candidates):
-                            # 计算对称性：左右引线到各自箭头的距离应该接近
-                            left_distance = left_line[0] - pairs[i][0]  # 左引线到左箭头的距离
-                            right_distance = pairs[i][2] - right_line[0]  # 右箭头到右引线的距离
+                    if same_line_detected:
+                        # 如果是同一根线，按照只有一侧有引线处理
+                        pairs_length_middle[0:4] = pairs[i, 0:4]
+                        
+                        # 选择评分更高的一侧
+                        if left_straight[0][5] > right_straight[0][5]:
+                            # 使用左引线
+                            left_straight = left_straight[np.argsort(-left_straight[:, 5])]  # 按评分排序
+                            pairs_length_middle[4:8] = left_straight[0, 0:4]
+                            left_line = left_straight[0, 0:4]
                             
-                            # 对称性评分：距离差的绝对值越小越好
-                            symmetry = abs(abs(left_distance) - abs(right_distance))
+                            left_distance = left_line[0] - pairs[i][0]
                             
-                            # 综合评分：对称性 + 单个引线的评分
-                            combined_score = (left_line[5] + right_line[5]) * 0.5 - symmetry * 2
+                            # 生成右侧引线（保持对称）
+                            right_line = [
+                                pairs[i][2] - abs(left_distance),
+                                left_line[1],
+                                pairs[i][2] - abs(left_distance),
+                                left_line[3]
+                            ]
+                            pairs_length_middle[8:12] = right_line
+                            print("同一根线：使用左引线，生成右引线（对称生成）")
+                        else:
+                            # 使用右引线
+                            right_straight = right_straight[np.argsort(-right_straight[:, 5])]  # 按评分排序
+                            pairs_length_middle[8:12] = right_straight[0, 0:4]
+                            right_line = right_straight[0, 0:4]
                             
-                            if combined_score > best_combined_score:
-                                best_combined_score = combined_score
-                                best_left_idx = li
-                                best_right_idx = ri
-                                best_symmetry_score = symmetry
-                    
-                    print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
-                    
-                    pairs_length_middle[0:4] = pairs[i, 0:4]
-                    pairs_length_middle[4:8] = left_candidates[best_left_idx, 0:4]
-                    pairs_length_middle[8:12] = right_candidates[best_right_idx, 0:4]
-                    pairs_length_middle[12] = abs(left_candidates[best_left_idx, 0] - right_candidates[best_right_idx, 0])
-                    pairs_length = np.r_[pairs_length, [pairs_length_middle]]
-                    print("找到两条引线，使用对称性最佳的配对")
-                    
+                            right_distance = pairs[i][2] - right_line[0]
+                            
+                            # 生成左侧引线（保持对称）
+                            left_line = [
+                                pairs[i][0] + abs(right_distance),
+                                right_line[1],
+                                pairs[i][0] + abs(right_distance),
+                                right_line[3]
+                            ]
+                            pairs_length_middle[4:8] = left_line
+                            print("同一根线：使用右引线，生成左引线（对称生成）")
+                        
+                        pairs_length_middle[12] = abs(pairs_length_middle[4] - pairs_length_middle[8])
+                        pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+                    else:
+                        # 原有的对称性匹配逻辑
+                        best_left_idx = 0
+                        best_right_idx = 0
+                        best_symmetry_score = float('inf')
+                        best_combined_score = 0
+                        
+                        # 限制搜索范围，取评分最高的前几个候选
+                        left_candidates = left_straight[np.argsort(-left_straight[:, 5])[:3]]  # 取评分最高的3个
+                        right_candidates = right_straight[np.argsort(-right_straight[:, 5])[:3]]  # 取评分最高的3个
+                        
+                        for li, left_line in enumerate(left_candidates):
+                            for ri, right_line in enumerate(right_candidates):
+                                # 计算对称性：左右引线到各自箭头的距离应该接近
+                                left_distance = left_line[0] - pairs[i][0]  # 左引线到左箭头的距离
+                                right_distance = pairs[i][2] - right_line[0]  # 右箭头到右引线的距离
+                                
+                                # 对称性评分：距离差的绝对值越小越好
+                                symmetry = abs(abs(left_distance) - abs(right_distance))
+                                
+                                # 综合评分：对称性 + 单个引线的评分
+                                combined_score = (left_line[5] + right_line[5]) * 0.5 - symmetry * 2
+                                
+                                if combined_score > best_combined_score:
+                                    best_combined_score = combined_score
+                                    best_left_idx = li
+                                    best_right_idx = ri
+                                    best_symmetry_score = symmetry
+                        
+                        print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                        
+                        pairs_length_middle[0:4] = pairs[i, 0:4]
+                        pairs_length_middle[4:8] = left_candidates[best_left_idx, 0:4]
+                        pairs_length_middle[8:12] = right_candidates[best_right_idx, 0:4]
+                        pairs_length_middle[12] = abs(left_candidates[best_left_idx, 0] - right_candidates[best_right_idx, 0])
+                        pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+                        print("找到两条引线，使用对称性最佳的配对")
+                    #####
                 elif len(left_straight) > 0 or len(right_straight) > 0:
                     # 只有一侧找到引线的处理（保持原有逻辑）
                     pairs_length_middle[0:4] = pairs[i, 0:4]
@@ -1501,21 +6440,15 @@ def find_pairs_length(img_path, pairs, test_mode):
                 for j in range(len(ver_lines_heng)):
                     # 使用评分函数计算上端引线
                     # 上端附近的直线
-                    if pairs[i][1] + ratio_inside * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
+                    if pairs[i][1] - ratio_inside * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][1] + ratio * (
                             pairs[i][3] - pairs[i][1]):
-                        
+                        print(">>> 进入上横线Y坐标条件")
+                        print(ver_lines_heng[j])
                         # 创建临时竖直线表示，用于评分计算
                         # 对于竖直方向的箭头，我们需要转换为水平引线的评分
                         # 使用类似逻辑但方向不同
-                        temp_vertical_line = [
-                            (ver_lines_heng[j][0] + ver_lines_heng[j][2]) / 2,  # x中心
-                            ver_lines_heng[j][1],  # y1
-                            (ver_lines_heng[j][0] + ver_lines_heng[j][2]) / 2,  # x中心
-                            ver_lines_heng[j][3]   # y2
-                        ]
+                        up_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=True)
                         
-                        # 计算上端评分
-                        up_score = calculate_match_score_simple(pairs[i], temp_vertical_line, heng, is_top=True)
                         
                         if up_score > 0:
                             middle[0:4] = ver_lines_heng[j]
@@ -1523,21 +6456,14 @@ def find_pairs_length(img_path, pairs, test_mode):
                             middle[5] = up_score  # 存储评分
                             up_straight = np.r_[up_straight, [middle]]
                             print(f"内向竖pairs找到上横线，距离: {middle[4]}, 评分: {up_score}")
-
+ 
                     # 下端附近的直线
-                    if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] - ratio_inside * (
+                    if pairs[i][3] - ratio * (pairs[i][3] - pairs[i][1]) < ver_lines_heng[j][1] < pairs[i][3] + ratio_inside * (
                             pairs[i][3] - pairs[i][1]):
-                        
+                        print(">>> 进入下横线Y坐标条件")
+                        print(ver_lines_heng[j])
                         # 创建临时竖直线表示，用于评分计算
-                        temp_vertical_line = [
-                            (ver_lines_heng[j][0] + ver_lines_heng[j][2]) / 2,  # x中心
-                            ver_lines_heng[j][1],  # y1
-                            (ver_lines_heng[j][0] + ver_lines_heng[j][2]) / 2,  # x中心
-                            ver_lines_heng[j][3]   # y2
-                        ]
-                        
-                        # 计算下端评分
-                        down_score = calculate_match_score_simple(pairs[i], temp_vertical_line, heng, is_top=False)
+                        down_score = calculate_match_score_simple(pairs[i], ver_lines_heng[j], heng, is_top=False)
                         
                         if down_score > 0:
                             middle[0:4] = ver_lines_heng[j]
@@ -1548,49 +6474,106 @@ def find_pairs_length(img_path, pairs, test_mode):
                 
                 # 关键修改：寻找最对称的引线对
                 if len(up_straight) > 0 and len(down_straight) > 0:
-                    best_up_idx = 0
-                    best_down_idx = 0
-                    best_symmetry_score = float('inf')
-                    best_combined_score = 0
+                    # 检查是否可能是同一根线
+                    same_line_detected = False
                     
-                    # 限制搜索范围，取评分最高的前几个候选
-                    up_candidates = up_straight[np.argsort(-up_straight[:, 5])[:3]]  # 取评分最高的3个
-                    down_candidates = down_straight[np.argsort(-down_straight[:, 5])[:3]]  # 取评分最高的3个
+                    # 检查是否有完全相同的线在up_straight和down_straight中
+                    for up_line in up_straight:
+                        for down_line in down_straight:
+                            if np.array_equal(up_line[0:4], down_line[0:4]):
+                                same_line_detected = True
+                                print("检测到同一根线被同时当作上引线和下引线")
+                                break
+                        if same_line_detected:
+                            break
                     
-                    for ui, up_line in enumerate(up_candidates):
-                        for di, down_line in enumerate(down_candidates):
-                            # 计算对称性：上下引线到各自箭头的距离应该接近
-                            up_distance = up_line[1] - pairs[i][1]  # 上引线到上箭头的距离
-                            down_distance = pairs[i][3] - down_line[1]  # 下箭头到下引线的距离
+                    if same_line_detected:
+                        # 如果是同一根线，按照只有一侧有引线处理
+                        print("检测到同一根线，按单侧引线处理")
+                        
+                        # 选择评分更高的一侧
+                        if up_straight[0][5] > down_straight[0][5]:
+                            # 使用上引线
+                            pairs_length_middle[0:4] = pairs[i, 0:4]
+                            pairs_length_middle[4:8] = up_straight[0, 0:4]
+                            up_line = up_straight[0, 0:4]
                             
-                            # 对称性评分：距离差的绝对值越小越好
-                            symmetry = abs(abs(up_distance) - abs(down_distance))
+                            up_distance = up_line[1] - pairs[i][1]
                             
-                            # 综合评分：对称性 + 单个引线的评分
-                            combined_score = (up_line[5] + down_line[5]) * 0.5 - symmetry * 2
+                            # 生成下侧引线（保持对称）
+                            down_line = [
+                                up_line[0],
+                                pairs[i][3] - abs(up_distance),
+                                up_line[2],
+                                pairs[i][3] - abs(up_distance)
+                            ]
+                            pairs_length_middle[8:12] = down_line
+                            print("使用上引线，生成下引线（对称生成）")
+                        else:
+                            # 使用下引线
+                            pairs_length_middle[0:4] = pairs[i, 0:4]
+                            pairs_length_middle[8:12] = down_straight[0, 0:4]
+                            down_line = down_straight[0, 0:4]
                             
-                            if combined_score > best_combined_score:
-                                best_combined_score = combined_score
-                                best_up_idx = ui
-                                best_down_idx = di
-                                best_symmetry_score = symmetry
-                    
-                    print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
-                    
-                    pairs_length_middle[0:4] = pairs[i, 0:4]
-                    pairs_length_middle[4:8] = up_candidates[best_up_idx, 0:4]
-                    pairs_length_middle[8:12] = down_candidates[best_down_idx, 0:4]
-                    pairs_length_middle[12] = abs(up_candidates[best_up_idx, 1] - down_candidates[best_down_idx, 1])
-                    pairs_length = np.r_[pairs_length, [pairs_length_middle]]
-                    print("找到两条引线，使用对称性最佳的配对")
-                    
+                            down_distance = pairs[i][3] - down_line[1]
+                            
+                            # 生成上侧引线（保持对称）
+                            up_line = [
+                                down_line[0],
+                                pairs[i][1] + abs(down_distance),
+                                down_line[2],
+                                pairs[i][1] + abs(down_distance)
+                            ]
+                            pairs_length_middle[4:8] = up_line
+                            print("使用下引线，生成上引线（对称生成）")
+                        
+                        pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
+                        pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+                    else:
+                        # 原有的对称性匹配逻辑
+                        best_up_idx = 0
+                        best_down_idx = 0
+                        best_symmetry_score = float('inf')
+                        best_combined_score = 0
+                        
+                        # 限制搜索范围，取评分最高的前几个候选
+                        up_candidates = up_straight[np.argsort(-up_straight[:, 5])[:3]]
+                        down_candidates = down_straight[np.argsort(-down_straight[:, 5])[:3]]
+                        
+                        for ui, up_line in enumerate(up_candidates):
+                            for di, down_line in enumerate(down_candidates):
+                                # 计算对称性：上下引线到各自箭头的距离应该接近
+                                up_distance = up_line[1] - pairs[i][1]
+                                down_distance = pairs[i][3] - down_line[1]
+                                
+                                # 对称性评分：距离差的绝对值越小越好
+                                symmetry = abs(abs(up_distance) - abs(down_distance))
+                                
+                                # 综合评分：对称性 + 单个引线的评分
+                                combined_score = (up_line[5] + down_line[5]) * 0.5 - symmetry * 2
+                                
+                                if combined_score > best_combined_score:
+                                    best_combined_score = combined_score
+                                    best_up_idx = ui
+                                    best_down_idx = di
+                                    best_symmetry_score = symmetry
+                        
+                        print(f"最佳对称性评分: {best_symmetry_score}, 综合评分: {best_combined_score}")
+                        
+                        pairs_length_middle[0:4] = pairs[i, 0:4]
+                        pairs_length_middle[4:8] = up_candidates[best_up_idx, 0:4]
+                        pairs_length_middle[8:12] = down_candidates[best_down_idx, 0:4]
+                        pairs_length_middle[12] = abs(up_candidates[best_up_idx, 1] - down_candidates[best_down_idx, 1])
+                        pairs_length = np.r_[pairs_length, [pairs_length_middle]]
+                        print("找到两条不同的引线，使用对称性最佳的配对")
+
                 elif len(up_straight) > 0 or len(down_straight) > 0:
-                    # 只有一侧找到引线的处理
+                    # 只有一侧找到引线的处理（保持不变）
                     pairs_length_middle[0:4] = pairs[i, 0:4]
                     
                     if len(up_straight) > 0:
                         # 按综合评分排序：距离和评分的加权
-                        up_straight = up_straight[np.argsort(-up_straight[:, 5])]  # 按评分排序
+                        up_straight = up_straight[np.argsort(-up_straight[:, 5])]
                         pairs_length_middle[4:8] = up_straight[0, 0:4]
                         up_line = up_straight[0, 0:4]
                         
@@ -1604,11 +6587,11 @@ def find_pairs_length(img_path, pairs, test_mode):
                             pairs[i][3] - abs(up_distance)
                         ]
                         pairs_length_middle[8:12] = down_line
-                        print("根据上侧引线生成下侧引线（内向）")
+                        print("根据上侧引线生成下侧引线（单侧引线）")
                     
                     elif len(down_straight) > 0:
                         # 按综合评分排序
-                        down_straight = down_straight[np.argsort(-down_straight[:, 5])]  # 按评分排序
+                        down_straight = down_straight[np.argsort(-down_straight[:, 5])]
                         pairs_length_middle[8:12] = down_straight[0, 0:4]
                         down_line = down_straight[0, 0:4]
                         
@@ -1622,7 +6605,7 @@ def find_pairs_length(img_path, pairs, test_mode):
                             pairs[i][1] + abs(down_distance)
                         ]
                         pairs_length_middle[4:8] = up_line
-                        print("根据下侧引线生成上侧引线（内向）")
+                        print("根据下侧引线生成上侧引线（单侧引线）")
                     
                     pairs_length_middle[12] = abs(pairs_length_middle[5] - pairs_length_middle[9])
                     pairs_length = np.r_[pairs_length, [pairs_length_middle]]
@@ -1685,11 +6668,11 @@ def find_pairs_length(img_path, pairs, test_mode):
         print("保存引线+标尺线组合失败")
     
     print("***/结束引线和标尺线的匹配/***")
-    # pairs_length = remove_duplicate_pairs(pairs_length)
-    # pairs_length = remove_contained_arrows(pairs_length)
+    pairs_length = remove_duplicate_pairs(pairs_length)
+    pairs_length = remove_contained_arrows(pairs_length)
     return pairs_length
 
-
+########################################################
 def remove_duplicate_pairs(pairs_length):
     """
     去除使用相同引线组合的重复箭头对，只保留引线到箭头对框距离最近的那个
@@ -5378,7 +10361,7 @@ def get_BGA_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
     c:引脚厚度
 
     '''
-    QFP_parameter_list = []
+    BGA_parameter_list = []
     dic = {'parameter_name': [], 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
     dic_D = {'parameter_name': 'D', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
     dic_E = {'parameter_name': 'E', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
@@ -5389,20 +10372,20 @@ def get_BGA_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
 
     # ===== 12.22新增：Φ（pin_diameter）=====
     dic_phi = {'parameter_name': 'Φ', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
-    phi_max = 0.8
-    phi_min = 0.4
-
+    phi_max = 0.91
+    phi_min = 0.25 #前值为0.4
+    phi_plus_exist = 0 #用于判断两个Φ中更大的一个
     # ===== 12.22新增：把 Φ 放到末尾（不影响原有索引）=====
 
-    # index = len(QFP_parameter_list)-1 = 19
-    phi_idx = len(QFP_parameter_list) - 1
+    # index = len(BGA_parameter_list)-1 = 19
+    phi_idx = len(BGA_parameter_list) - 1
     # ==============================================
     # ================================
 
     dic_D1 = {'parameter_name': 'D1', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
     dic_E1 = {'parameter_name': 'E1', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
     D1_max = 30
-    D1_min = 6.9
+    D1_min = 7.4
     E1_max = D1_max
     E1_min = D1_min
 
@@ -5439,14 +10422,14 @@ def get_BGA_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
     # dic_E2 = {'parameter_name': 'E2', 'maybe_data': [], 'possible': []}
 
     dic_A = {'parameter_name': 'A', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
-    A_max = 4.5
-    A_min = 1.0
+    A_max = 5.33#前值为4.5
+    A_min = 0.76#前值为0.95
     dic_A1 = {'parameter_name': 'A1', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
-    A1_max = 0.4
+    A1_max = 0.416#前值为0.4
     A1_min = 0
     dic_e = {'parameter_name': 'e', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
     e_max = 1.3
-    e_min = 0.30
+    e_min = 0.40
     dic_b = {'parameter_name': 'b', 'maybe_data': [], 'maybe_data_num': 0, 'possible': [], 'OK': 0}
     b_max = 0.83
     b_min = 0.13
@@ -5456,170 +10439,229 @@ def get_BGA_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
     D2_min = 3.15
     E2_max = 7.2
     E2_min = 3.15
-    QFP_parameter_list.append(dic_D)
-    QFP_parameter_list.append(dic_E)
-    QFP_parameter_list.append(dic_D1)
-    QFP_parameter_list.append(dic_E1)
-    # QFP_parameter_list.append(dic_D2)
-    # QFP_parameter_list.append(dic_E2)
-    QFP_parameter_list.append(dic_A)
-    QFP_parameter_list.append(dic_A1)
-    QFP_parameter_list.append(dic_e)
-    QFP_parameter_list.append(dic_b)
-    QFP_parameter_list.append(dic_D2)
-    QFP_parameter_list.append(dic_E2)
-    QFP_parameter_list.append(dic_L)
-    QFP_parameter_list.append(dic_GAGE_PLANE)
-    QFP_parameter_list.append(dic_c)
-    QFP_parameter_list.append(dic_θ)
-    QFP_parameter_list.append(dic_θ1)
-    QFP_parameter_list.append(dic_θ2)
-    QFP_parameter_list.append(dic_θ3)
+    BGA_parameter_list.append(dic_D)
+    BGA_parameter_list.append(dic_E)
+    BGA_parameter_list.append(dic_D1)
+    BGA_parameter_list.append(dic_E1)
+    # BGA_parameter_list.append(dic_D2)
+    # BGA_parameter_list.append(dic_E2)
+    BGA_parameter_list.append(dic_A)
+    BGA_parameter_list.append(dic_A1)
+    BGA_parameter_list.append(dic_e)
+    BGA_parameter_list.append(dic_b)
+    BGA_parameter_list.append(dic_D2)
+    BGA_parameter_list.append(dic_E2)
+    BGA_parameter_list.append(dic_L)
+    BGA_parameter_list.append(dic_GAGE_PLANE)
+    BGA_parameter_list.append(dic_c)
+    BGA_parameter_list.append(dic_θ)
+    BGA_parameter_list.append(dic_θ1)
+    BGA_parameter_list.append(dic_θ2)
+    BGA_parameter_list.append(dic_θ3)
     # 12.22新增：Φ（pin_diameter）=====
+    BGA_parameter_list.append(dic_phi)
+    # 01.20新增：top上的D与E优先级提高=====
+    topD = 0
+    topD1 = 0
+    topE = 0
+    topE1 = 0
 
-    QFP_parameter_list.append(dic_phi)
+    # 0121新增：pitch(e) 标准集优先逻辑 =====
+    PITCH_STD_SET = {0.80, 1.00, 0.50, 1.27, 0.65, 0.76}
 
+    # def is_pitch_std(item, std_set=PITCH_STD_SET, tol=0.02):
+    #     """
+    #     判断 item 的 pitch 是否命中标准集：
+    #     取 max_medium_min 的中间值（index=1）来比对，允许 tol 误差。
+    #     """
+    #     mmm = item.get("max_medium_min", None)
+    #     if mmm is None or len(mmm) < 2:
+    #         return False
+    #     try:
+    #         mid = float(mmm[1])
+    #     except Exception:
+    #         return False
+    #     return any(abs(mid - v) <= tol for v in std_set)
 
+    # 0120新增：DE推理逻辑更新 =====
+    if len(body_x) > 0:
+        BGA_parameter_list[2]['maybe_data'] = [
+            x for x in body_x
+            if D1_min <= x['max_medium_min'][2] and x['max_medium_min'][0] <= D1_max
+        ]
 
-
+    if len(body_y) > 0:
+        BGA_parameter_list[3]['maybe_data'] = [
+            y for y in body_y
+            if E1_min <= y['max_medium_min'][2] and y['max_medium_min'][0] <= E1_max
+        ]
     for i in range(len(top_ocr_data)):
-        if D_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= D_max:
-            QFP_parameter_list[0]['maybe_data'].append(top_ocr_data[i])
-            QFP_parameter_list[0]['maybe_data_num'] += 1
-        if E_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= E_max:
-            QFP_parameter_list[1]['maybe_data'].append(top_ocr_data[i])
-            QFP_parameter_list[1]['maybe_data_num'] += 1
-        if len(body_x) > 0:
-            QFP_parameter_list[2]['maybe_data'] = body_x
-        if D1_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= D1_max:
-                QFP_parameter_list[2]['maybe_data'].append(top_ocr_data[i])
-                QFP_parameter_list[2]['maybe_data_num'] += 1
-        if len(body_y) > 0:
-            QFP_parameter_list[3]['maybe_data'] = body_y
-        if E1_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= E1_max:
-                QFP_parameter_list[3]['maybe_data'].append(top_ocr_data[i])
-                QFP_parameter_list[3]['maybe_data_num'] += 1
+        # if D_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= D_max and LR_UD_location(top_ocr_data[i]) =='UD':
+        #     BGA_parameter_list[0]['maybe_data'].append(top_ocr_data[i])
+        #     BGA_parameter_list[0]['maybe_data_num'] += 1
+        #     topD += 1
+        # if E_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= E_max and LR_UD_location(top_ocr_data[i]) =='LR':
+        #     BGA_parameter_list[1]['maybe_data'].append(top_ocr_data[i])
+        #     BGA_parameter_list[1]['maybe_data_num'] += 1
+        #     topE += 1
+        # if len(body_x) > 0:
+        #
+        #     BGA_parameter_list[2]['maybe_data'] = body_x
+        if D1_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= D1_max and LR_UD_location(top_ocr_data[i]) =='UD':
+                BGA_parameter_list[2]['maybe_data'].append(top_ocr_data[i])
+                BGA_parameter_list[2]['maybe_data_num'] += 1
+                topD1 += 1
+        # if len(body_y) > 0:
+        #     BGA_parameter_list[3]['maybe_data'] = body_y
+        if E1_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= E1_max and LR_UD_location(top_ocr_data[i]) =='LR':
+                BGA_parameter_list[3]['maybe_data'].append(top_ocr_data[i])
+                BGA_parameter_list[3]['maybe_data_num'] += 1
+                topE1 += 1
         if e_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= e_max:
-            QFP_parameter_list[6]['maybe_data'].append(top_ocr_data[i])
-            QFP_parameter_list[6]['maybe_data_num'] += 1
+            BGA_parameter_list[6]['maybe_data'].append(top_ocr_data[i])
+            BGA_parameter_list[6]['maybe_data_num'] += 1
         if b_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= b_max:
-            QFP_parameter_list[7]['maybe_data'].append(top_ocr_data[i])
-            QFP_parameter_list[7]['maybe_data_num'] += 1
-        if D2_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= D2_max:
-            QFP_parameter_list[8]['maybe_data'].append(top_ocr_data[i])
-            QFP_parameter_list[8]['maybe_data_num'] += 1
-        if E2_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= E2_max:
-            QFP_parameter_list[9]['maybe_data'].append(top_ocr_data[i])
-            QFP_parameter_list[9]['maybe_data_num'] += 1
+            BGA_parameter_list[7]['maybe_data'].append(top_ocr_data[i])
+            BGA_parameter_list[7]['maybe_data_num'] += 1
+        # if D2_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= D2_max:
+        #     BGA_parameter_list[8]['maybe_data'].append(top_ocr_data[i])
+        #     BGA_parameter_list[8]['maybe_data_num'] += 1
+        # if E2_min <= top_ocr_data[i]['max_medium_min'][2] and top_ocr_data[i]['max_medium_min'][0] <= E2_max:
+        #     BGA_parameter_list[9]['maybe_data'].append(top_ocr_data[i])
+        #     BGA_parameter_list[9]['maybe_data_num'] += 1
+
+    # 遍历bottom_ocr_data前先找有没有符合范围的 pin_diameter+ 候选
+    # ===== Φ: 只从 bottom_ocr_data 来；优先 pin_diameter+，没有才用 pin_diameter =====
+    phi_plus_candidates = []
+    phi_candidates = []
+
+    for j in range(len(bottom_ocr_data)):
+        ab = bottom_ocr_data[j].get('Absolutely')
+        if ab not in ('pin_diameter+', 'pin_diameter'):
+            continue
+
+        if phi_min <= bottom_ocr_data[j]['max_medium_min'][2] and bottom_ocr_data[j]['max_medium_min'][0] <= phi_max:
+            if ab == 'pin_diameter+':
+                phi_plus_candidates.append(bottom_ocr_data[j])
+            else:
+                phi_candidates.append(bottom_ocr_data[j])
+
+    # 有 pin_diameter+ 就只用 +，否则用普通
+    chosen = phi_plus_candidates if phi_plus_candidates else phi_candidates
+    for item in chosen:
+        BGA_parameter_list[phi_idx]['maybe_data'].append(item)
+        BGA_parameter_list[phi_idx]['maybe_data_num'] += 1
+    # =====================================================================
+
     for i in range(len(bottom_ocr_data)):
-        if D_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= D_max  :
-            QFP_parameter_list[0]['maybe_data'].append(bottom_ocr_data[i])
-            QFP_parameter_list[0]['maybe_data_num'] += 1
-        if E_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= E_max :
-            QFP_parameter_list[1]['maybe_data'].append(bottom_ocr_data[i])
-            QFP_parameter_list[1]['maybe_data_num'] += 1
-        if D1_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= D1_max:
-           if bottom_ocr_data[i].get('Absolutely') == 'Body_x':
-                QFP_parameter_list[2]['maybe_data'].append(bottom_ocr_data[i])
-                QFP_parameter_list[2]['maybe_data_num'] += 1
+        # if D_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= D_max and topD == 0 and LR_UD_location(bottom_ocr_data[i]) == 'UD':
+        #     BGA_parameter_list[0]['maybe_data'].append(bottom_ocr_data[i])
+        #     BGA_parameter_list[0]['maybe_data_num'] += 1
+        # if E_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= E_max and topE == 0 and LR_UD_location(bottom_ocr_data[i]) == 'LR':
+        #     BGA_parameter_list[1]['maybe_data'].append(bottom_ocr_data[i])
+        #     BGA_parameter_list[1]['maybe_data_num'] += 1
+        if D1_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= D1_max and topD1 == 0 and LR_UD_location(bottom_ocr_data[i]) == 'UD':
+            if bottom_ocr_data[i].get('Absolutely') == 'Body_x':
+                BGA_parameter_list[2]['maybe_data'].append(bottom_ocr_data[i])
+                BGA_parameter_list[2]['maybe_data_num'] += 1
             # ===== 新增：Φ 只从 bottom_ocr_data 来，且 Absolutely == 'pin_diameter' =====
             # ===== 新增：Φ只从bottom来，且Absolutely == pin_diameter =====
-        if bottom_ocr_data[i].get('Absolutely') == 'pin_diameter' or bottom_ocr_data[i].get(
-                'Absolutely') == 'mb_pin_diameter' or bottom_ocr_data[i].get('Absolutely') == 'pin_diameter+':
-            if phi_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][
-                0] <= phi_max:
-                QFP_parameter_list[phi_idx]['maybe_data'].append(bottom_ocr_data[i])  # 用-1永远指向最后一个（Φ）
-                QFP_parameter_list[phi_idx]['maybe_data_num'] += 1
-        # =====================================================================
+        # if bottom_ocr_data[i].get('Absolutely') == 'pin_diameter+'or bottom_ocr_data[i].get('Absolutely') == 'pin_diameter':
+        #     if phi_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][
+        #         0] <= phi_max:
+        #         BGA_parameter_list[phi_idx]['maybe_data'].append(bottom_ocr_data[i])  # 用-1永远指向最后一个（Φ）
+        #         BGA_parameter_list[phi_idx]['maybe_data_num'] += 1
 
-        if E1_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= E1_max:
+        if E1_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= E1_max and topE1 == 0 and LR_UD_location(bottom_ocr_data[i]) == 'LR':
             if bottom_ocr_data[i].get('Absolutely') == 'Body_y':
-                QFP_parameter_list[3]['maybe_data'].append(bottom_ocr_data[i])
-                QFP_parameter_list[3]['maybe_data_num'] += 1
+                BGA_parameter_list[3]['maybe_data'].append(bottom_ocr_data[i])
+                BGA_parameter_list[3]['maybe_data_num'] += 1
         #0111新增：将ocr中最大的数据填入D1与E1的候选列表中
-        # Max_index_D = max_maybe_data_medium(QFP_parameter_list[0])  # 0为D，1为E，2为D1，3为E1
-        # Max_index_E = max_maybe_data_medium(QFP_parameter_list[1])
-        # QFP_parameter_list[2]['maybe_data'].append(bottom_ocr_data[Max_index_D])
-        # QFP_parameter_list[2]['maybe_data_num'] += 1
-        # QFP_parameter_list[3]['maybe_data'].append(bottom_ocr_data[Max_index_E])
-        # QFP_parameter_list[3]['maybe_data_num'] += 1
+        # Max_index_D = max_maybe_data_medium(BGA_parameter_list[0])  # 0为D，1为E，2为D1，3为E1
+        # Max_index_E = max_maybe_data_medium(BGA_parameter_list[1])
+        # BGA_parameter_list[2]['maybe_data'].append(bottom_ocr_data[Max_index_D])
+        # BGA_parameter_list[2]['maybe_data_num'] += 1
+        # BGA_parameter_list[3]['maybe_data'].append(bottom_ocr_data[Max_index_E])
+        # BGA_parameter_list[3]['maybe_data_num'] += 1
 
         if bottom_ocr_data[i].get('Absolutely') != 'pin_diameter' and bottom_ocr_data[i].get(
                 'Absolutely') != 'mb_pin_diameter' and bottom_ocr_data[i].get('Absolutely') != 'pin_diameter+':
             if e_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= e_max:
-                QFP_parameter_list[6]['maybe_data'].append(bottom_ocr_data[i])
-                QFP_parameter_list[6]['maybe_data_num'] += 1
-        if b_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= b_max:
-            QFP_parameter_list[7]['maybe_data'].append(bottom_ocr_data[i])
-            QFP_parameter_list[7]['maybe_data_num'] += 1
-        if D2_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= D2_max:
-            QFP_parameter_list[8]['maybe_data'].append(bottom_ocr_data[i])
-            QFP_parameter_list[8]['maybe_data_num'] += 1
-        if E2_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= E2_max:
-            QFP_parameter_list[9]['maybe_data'].append(bottom_ocr_data[i])
-            QFP_parameter_list[9]['maybe_data_num'] += 1
+                BGA_parameter_list[6]['maybe_data'].append(bottom_ocr_data[i])
+                BGA_parameter_list[6]['maybe_data_num'] += 1
+            # if b_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= b_max:
+            #     BGA_parameter_list[7]['maybe_data'].append(bottom_ocr_data[i])
+            #     BGA_parameter_list[7]['maybe_data_num'] += 1
+        # if D2_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= D2_max:
+        #     BGA_parameter_list[8]['maybe_data'].append(bottom_ocr_data[i])
+        #     BGA_parameter_list[8]['maybe_data_num'] += 1
+        # if E2_min <= bottom_ocr_data[i]['max_medium_min'][2] and bottom_ocr_data[i]['max_medium_min'][0] <= E2_max:
+        #     BGA_parameter_list[9]['maybe_data'].append(bottom_ocr_data[i])
+        #     BGA_parameter_list[9]['maybe_data_num'] += 1
 
     for i in range(len(side_ocr_data)):
-        if D_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= D_max:
-            QFP_parameter_list[0]['maybe_data'].append(side_ocr_data[i])
-            QFP_parameter_list[0]['maybe_data_num'] += 1
-        if E_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= E_max:
-            QFP_parameter_list[1]['maybe_data'].append(side_ocr_data[i])
-            QFP_parameter_list[1]['maybe_data_num'] += 1
+        # if D_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= D_max:
+        #     BGA_parameter_list[0]['maybe_data'].append(side_ocr_data[i])
+        #     BGA_parameter_list[0]['maybe_data_num'] += 1
+        # if E_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= E_max:
+        #     BGA_parameter_list[1]['maybe_data'].append(side_ocr_data[i])
+        #     BGA_parameter_list[1]['maybe_data_num'] += 1
         if D1_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= D1_max:
-                QFP_parameter_list[2]['maybe_data'].append(side_ocr_data[i])
-                QFP_parameter_list[2]['maybe_data_num'] += 1
+                BGA_parameter_list[2]['maybe_data'].append(side_ocr_data[i])
+                BGA_parameter_list[2]['maybe_data_num'] += 1
         if E1_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= E1_max:
-                QFP_parameter_list[3]['maybe_data'].append(side_ocr_data[i])
-                QFP_parameter_list[3]['maybe_data_num'] += 1
+                BGA_parameter_list[3]['maybe_data'].append(side_ocr_data[i])
+                BGA_parameter_list[3]['maybe_data_num'] += 1
         if A_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= A_max:
-            QFP_parameter_list[4]['maybe_data'].append(side_ocr_data[i])
-            QFP_parameter_list[4]['maybe_data_num'] += 1
+            BGA_parameter_list[4]['maybe_data'].append(side_ocr_data[i])
+            BGA_parameter_list[4]['maybe_data_num'] += 1
 
         if A1_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= A1_max:
-            QFP_parameter_list[5]['maybe_data'].append(side_ocr_data[i])
-            QFP_parameter_list[5]['maybe_data_num'] += 1
-        if e_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= e_max:
-            QFP_parameter_list[6]['maybe_data'].append(side_ocr_data[i])
-            QFP_parameter_list[6]['maybe_data_num'] += 1
-        if b_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= b_max:
-            QFP_parameter_list[7]['maybe_data'].append(side_ocr_data[i])
-            QFP_parameter_list[7]['maybe_data_num'] += 1
+            BGA_parameter_list[5]['maybe_data'].append(side_ocr_data[i])
+            BGA_parameter_list[5]['maybe_data_num'] += 1
+        if BGA_parameter_list[6]['maybe_data_num'] == 0:
+            #bottom里找不到e的候选参数时才从side里找
+            if e_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= e_max:
+                BGA_parameter_list[6]['maybe_data'].append(side_ocr_data[i])
+                BGA_parameter_list[6]['maybe_data_num'] += 1
+            if b_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= b_max:
+                BGA_parameter_list[7]['maybe_data'].append(side_ocr_data[i])
+                BGA_parameter_list[7]['maybe_data_num'] += 1
         if side_ocr_data[i]['Absolutely'] == 'angle':
             if θ2_min <= side_ocr_data[i]['max_medium_min'][2] and side_ocr_data[i]['max_medium_min'][0] <= θ2_max:
-                QFP_parameter_list[15]['maybe_data'].append(side_ocr_data[i])
-                QFP_parameter_list[15]['maybe_data_num'] += 1
+                BGA_parameter_list[15]['maybe_data'].append(side_ocr_data[i])
+                BGA_parameter_list[15]['maybe_data_num'] += 1
     for i in range(len(detailed_ocr_data)):
         if A_min <= detailed_ocr_data[i]['max_medium_min'][2] and detailed_ocr_data[i]['max_medium_min'][0] <= A_max:
-            QFP_parameter_list[4]['maybe_data'].append(detailed_ocr_data[i])
-            QFP_parameter_list[4]['maybe_data_num'] += 1
+            BGA_parameter_list[4]['maybe_data'].append(detailed_ocr_data[i])
+            BGA_parameter_list[4]['maybe_data_num'] += 1
         if L_min <= detailed_ocr_data[i]['max_medium_min'][2] and detailed_ocr_data[i]['max_medium_min'][0] <= L_max:
-            QFP_parameter_list[10]['maybe_data'].append(detailed_ocr_data[i])
-            QFP_parameter_list[10]['maybe_data_num'] += 1
+            BGA_parameter_list[10]['maybe_data'].append(detailed_ocr_data[i])
+            BGA_parameter_list[10]['maybe_data_num'] += 1
         if GAGE_PLANE_min <= detailed_ocr_data[i]['max_medium_min'][2] and detailed_ocr_data[i]['max_medium_min'][0] <= GAGE_PLANE_max:
-            QFP_parameter_list[11]['maybe_data'].append(detailed_ocr_data[i])
-            QFP_parameter_list[11]['maybe_data_num'] += 1
+            BGA_parameter_list[11]['maybe_data'].append(detailed_ocr_data[i])
+            BGA_parameter_list[11]['maybe_data_num'] += 1
         if c_min <= detailed_ocr_data[i]['max_medium_min'][2] and detailed_ocr_data[i]['max_medium_min'][0] <= c_max:
-            QFP_parameter_list[12]['maybe_data'].append(detailed_ocr_data[i])
-            QFP_parameter_list[12]['maybe_data_num'] += 1
+            BGA_parameter_list[12]['maybe_data'].append(detailed_ocr_data[i])
+            BGA_parameter_list[12]['maybe_data_num'] += 1
 
         if detailed_ocr_data[i]['Absolutely'] == 'angle':
             if θ_min <= detailed_ocr_data[i]['max_medium_min'][2] and detailed_ocr_data[i]['max_medium_min'][0] <= θ_max:
-                QFP_parameter_list[13]['maybe_data'].append(detailed_ocr_data[i])
-                QFP_parameter_list[13]['maybe_data_num'] += 1
+                BGA_parameter_list[13]['maybe_data'].append(detailed_ocr_data[i])
+                BGA_parameter_list[13]['maybe_data_num'] += 1
             if θ1_min <= detailed_ocr_data[i]['max_medium_min'][2] and detailed_ocr_data[i]['max_medium_min'][0] <= θ1_max:
-                QFP_parameter_list[14]['maybe_data'].append(detailed_ocr_data[i])
-                QFP_parameter_list[14]['maybe_data_num'] += 1
+                BGA_parameter_list[14]['maybe_data'].append(detailed_ocr_data[i])
+                BGA_parameter_list[14]['maybe_data_num'] += 1
 
             if θ2_min < detailed_ocr_data[i]['max_medium_min'][2] and detailed_ocr_data[i]['max_medium_min'][0] <= θ2_max:
-                QFP_parameter_list[15]['maybe_data'].append(detailed_ocr_data[i])
-                QFP_parameter_list[15]['maybe_data_num'] += 1
+                BGA_parameter_list[15]['maybe_data'].append(detailed_ocr_data[i])
+                BGA_parameter_list[15]['maybe_data_num'] += 1
             if θ3_min <= detailed_ocr_data[i]['max_medium_min'][2] and detailed_ocr_data[i]['max_medium_min'][0] <= θ3_max:
-                QFP_parameter_list[16]['maybe_data'].append(detailed_ocr_data[i])
-                QFP_parameter_list[16]['maybe_data_num'] += 1
+                BGA_parameter_list[16]['maybe_data'].append(detailed_ocr_data[i])
+                BGA_parameter_list[16]['maybe_data_num'] += 1
 
-    for i in range(len(QFP_parameter_list)):
-        maybe = QFP_parameter_list[i].get("maybe_data", [])
+    for i in range(len(BGA_parameter_list)):
+        maybe = BGA_parameter_list[i].get("maybe_data", [])
         seen = set()
         new_maybe = []
 
@@ -5634,57 +10676,98 @@ def get_BGA_parameter_list(top_ocr_data, bottom_ocr_data, side_ocr_data, detaile
             seen.add(key)
             new_maybe.append(maybe[j])
 
-        QFP_parameter_list[i]["maybe_data"] = new_maybe
-        QFP_parameter_list[i]["maybe_data_num"] = len(new_maybe)
+        BGA_parameter_list[i]["maybe_data"] = new_maybe
+        BGA_parameter_list[i]["maybe_data_num"] = len(new_maybe)
 
-    for i in range(len(QFP_parameter_list)):
+    for i in range(len(BGA_parameter_list)):
         print("筛选完毕，以下是第一次填参结果：")
-        print("***/", QFP_parameter_list[i]['parameter_name'],"/***")
+        print("***/", BGA_parameter_list[i]['parameter_name'],"/***")
 
-        for j in range(len(QFP_parameter_list[i]['maybe_data'])):
-            print(QFP_parameter_list[i]['maybe_data'][j]['max_medium_min'])
+        for j in range(len(BGA_parameter_list[i]['maybe_data'])):
+            print(BGA_parameter_list[i]['maybe_data'][j]['max_medium_min'])
 
-    for i in range(len(QFP_parameter_list)):
-        print(QFP_parameter_list[i]['maybe_data_num'])
+    for i in range(len(BGA_parameter_list)):
+        print(BGA_parameter_list[i]['maybe_data_num'])
 
-    return QFP_parameter_list
+    return BGA_parameter_list
 
-def resort_parameter_list_2(QFP_parameter_list):
+#0121新增：使用标准集推理pitch值
+#tol是误差半径
+def _is_pitch_std_item(item, std_set, tol=0.00):
+    mmm = item.get("max_medium_min", None)
+    if mmm is None or len(mmm) < 2:
+        return False
+    try:
+        mid = float(mmm[1])  # 取中间值
+    except Exception:
+        return False
+    return any(abs(mid - v) <= tol for v in std_set)
+
+
+def apply_pitch_std_filter_for_e(BGA_parameter_list, tol=0.0):
+    """
+    最终确定阶段前：对参数 e 执行“标准集过滤”
+    - 若存在命中标准集的候选：e 的 maybe_data 只保留这些命中的（不允许混入非标准集）
+    - 若不存在命中标准集的候选：e 的 maybe_data 保持原样
+    """
+    PITCH_STD_SET = {0.80, 1.00, 0.50, 1.27, 0.65, 0.76}
+
+    for dic in BGA_parameter_list:
+        if dic.get("parameter_name") != "e":
+            continue
+
+        maybe = dic.get("maybe_data", []) or []
+        hit = [x for x in maybe if _is_pitch_std_item(x, PITCH_STD_SET, tol=tol)]
+
+        if len(hit) > 0:
+            # 关键：只要命中，就只保留标准集命中的候选（彻底剔除其它噪声）
+            dic["maybe_data"] = hit
+
+        dic["maybe_data_num"] = len(dic["maybe_data"])
+        break
+
+    return BGA_parameter_list
+
+def resort_parameter_list_2(BGA_parameter_list):
     '''
     1.查看哪些参数已经只有一个标注了，将这个参数确定标注
     2.将其他参数的可能标注中去除这个确定标注
     3.返回1
     '''
     print("继续筛选参数，确定唯一值：")
+
+    # 0121新增：使用标准集推理pitch值
+    BGA_parameter_list = apply_pitch_std_filter_for_e(BGA_parameter_list, tol=0.005)
+
     key = True
     while key:
         key = False
-        for i in range(len(QFP_parameter_list)):
+        for i in range(len(BGA_parameter_list)):
 
-            if len(QFP_parameter_list[i]['maybe_data']) == 1:
-                key_dic = QFP_parameter_list[i]['maybe_data'][0]
-                QFP_parameter_list[i]['OK'] = 1
+            if len(BGA_parameter_list[i]['maybe_data']) == 1:
+                key_dic = BGA_parameter_list[i]['maybe_data'][0]
+                BGA_parameter_list[i]['OK'] = 1
 
-                for j in range(len(QFP_parameter_list)):
+                for j in range(len(BGA_parameter_list)):
                     if j != i:
-                        if len(QFP_parameter_list[j]['maybe_data']) > 0:
-                            if any(np.array_equal(key_dic, item) for item in QFP_parameter_list[j]['maybe_data']):
+                        if len(BGA_parameter_list[j]['maybe_data']) > 0:
+                            if any(np.array_equal(key_dic, item) for item in BGA_parameter_list[j]['maybe_data']):
                                 # 执行相应的操作
 
-                                QFP_parameter_list[j]['maybe_data'] = [d for d in QFP_parameter_list[j]['maybe_data'] if not np.array_equal(key_dic, d)]
+                                BGA_parameter_list[j]['maybe_data'] = [d for d in BGA_parameter_list[j]['maybe_data'] if not np.array_equal(key_dic, d)]
                                 key = True
 
-    for i in range(len(QFP_parameter_list)):
-        print("***/", QFP_parameter_list[i]['parameter_name'], "/***")
-        print(QFP_parameter_list[i])
-        for j in range(len(QFP_parameter_list[i]['maybe_data'])):
-            print(QFP_parameter_list[i]['maybe_data'][j]['max_medium_min'])
-    for i in range(len(QFP_parameter_list)):
-        QFP_parameter_list[i]['maybe_data_num'] = len(QFP_parameter_list[i]['maybe_data'])
+    for i in range(len(BGA_parameter_list)):
+        print("***/", BGA_parameter_list[i]['parameter_name'], "/***")
+        print(BGA_parameter_list[i])
+        for j in range(len(BGA_parameter_list[i]['maybe_data'])):
+            print(BGA_parameter_list[i]['maybe_data'][j]['max_medium_min'])
+    for i in range(len(BGA_parameter_list)):
+        BGA_parameter_list[i]['maybe_data_num'] = len(BGA_parameter_list[i]['maybe_data'])
 
-    for i in range(len(QFP_parameter_list)):
-        print(QFP_parameter_list[i]['maybe_data_num'])
-    return QFP_parameter_list
+    for i in range(len(BGA_parameter_list)):
+        print(BGA_parameter_list[i]['maybe_data_num'])
+    return BGA_parameter_list
 
 def empty_folder(folder_path):
     try:
@@ -6197,7 +11280,7 @@ def build_numbered_txt_path(log_dir: Path, base_name: str, view_idx: int | None 
 
 
 def run_and_save_resort_log(
-        QFP_parameter_list,
+        BGA_parameter_list,
         temp_dir: str | Path = "Result/temp",
         txt_root_dir: str | Path = "BGA_pdf",
         base_name: str = "resort_log",
@@ -6216,7 +11299,7 @@ def run_and_save_resort_log(
         print(f"===== PDF: {pdf_path.name} =====")
         print(f"===== VIEW: {view_idx if view_idx is not None else 'AUTO'} =====")
         print("===== RESORT PARAMETER LOG =====")
-        resort_parameter_list_2(QFP_parameter_list)
+        resort_parameter_list_2(BGA_parameter_list)
 
     return txt_path
 
@@ -6290,10 +11373,26 @@ def Body_x_y_length(bottom_ocr_data):
         print("未找到纵向最大长度箭头对")
     return bottom_ocr_data
 
+
+#0120新增：识别箭头对位置，判断其属于横向箭头对还是竖向箭头对
+def LR_UD_location(bottom_ocr_data_i):
+    location = bottom_ocr_data_i.get('matched_pairs_location', [])
+    if len(location) >= 4:
+        width = abs(location[2] - location[0])
+        height = abs(location[3] - location[1])
+        if width > height:
+            type = 'UD' #横向长于纵向
+        elif height > width:
+            type = 'LR'
+    elif len(location) < 4:
+        type = ''
+    return type
+
+
 # 0111新增,找出候选参数maybe_data中medium值最大的元素
 def max_maybe_data_medium(param):
         """
-        输入: param = QFP_parameter_list[i]
+        输入: param = BGA_parameter_list[i]
         输出: j (使 param['maybe_data'][j]['max_medium_min'][1] 最大的索引)
              如果 maybe_data 为空或找不到有效值，返回 -1
         """

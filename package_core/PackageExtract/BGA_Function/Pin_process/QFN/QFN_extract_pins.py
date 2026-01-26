@@ -496,15 +496,7 @@ def QFN_extract_pins(img_path):
         txt_output_path = result_path("Package_view","pin","QFN_adjacent_pins.txt")
         save_simple_txt(adj_pairs, txt_output_path)
 
-        # # 简单的打印 Pitch 信息 (可选)
-        # if adj_pairs['x_pair']:
-        #     p1, p2 = adj_pairs['x_pair']
-        #     x_pitch = abs(((p1[0] + p1[2]) / 2) - ((p2[0] + p2[2]) / 2))
-        #     print(f"  [Info] 估算 X-Pitch: {x_pitch:.2f} pixels")
-        # if adj_pairs['y_pair']:
-        #     p1, p2 = adj_pairs['y_pair']
-        #     y_pitch = abs(((p1[1] + p1[3]) / 2) - ((p2[1] + p2[3]) / 2))
-        #     print(f"  [Info] 估算 Y-Pitch: {y_pitch:.2f} pixels")
+
 
         # === 新增：调用可视化 ===
         # 定义可视化图片保存路径 (例如保存到原图片目录下，文件名加后缀)

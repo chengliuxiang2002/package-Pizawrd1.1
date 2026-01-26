@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
 from package_core.PackageExtract.BGA_Function.Pin_process.BGA_extract_pins import BGA_get_PIN
+from package_core.PackageExtract.BGA_Function.Pin_process.get_pinmap import get_pinmap
+
 from package_core.PackageExtract.get_pairs_data_present5_test import correct_serial_letters_data
 # from package_core.PackageExtract.yolox_onnx_py.onnx_output_bottom_pin_location import begain_output_bottom_pin_location
 from package_core.PackageExtract.yolox_onnx_py.onnx_detect_pin import onnx_output_pairs_data_pin_5
@@ -312,88 +314,6 @@ def crop_img_save(path_img, path_crop, x_min, y_min, x_max, y_max):
     cv2.imwrite(path_crop, cropped)
     print("保存图", path_crop)
 
-
-def get_pinmap():
-    # 由用户决定是否使用人工框选pinmap
-    # 创建文件夹
-    location = output_body(f'{BGA_BOTTOM}/bottom.jpg')
-    print("location", location)
-    path_img = f'{BGA_BOTTOM}/bottom.jpg'
-    path_crop = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
-
-    if not np.array_equal(location, np.array([])):
-        print("在单张bottom中找到外框")
-
-        x_min = min(location[0, 0], location[0, 2])
-        y_min = min(location[0, 1], location[0, 3])
-        x_max = max(location[0, 0], location[0, 2])
-        y_max = max(location[0, 1], location[0, 3])
-        crop_img_save(path_img, path_crop, x_min, y_min, x_max, y_max)
-        shutil.copy(path_crop, path_img)
-
-
-        # pin = onnx_output_pairs_data_pin_5(path_crop)
-        # # pin中找x_min和y_min和x_max和y_max
-        # x_min = 9999
-        # y_min = 9999
-        # x_max = 0
-        # y_max = 0
-        # for i in range(len(pin)):
-        #     if pin[i][0] < x_min:
-        #         x_min = pin[i][0]
-        #     if pin[i][1] < y_min:
-        #         y_min = pin[i][1]
-        #     if pin[i][2] > x_max:
-        #         x_max = pin[i][2]
-        #     if pin[i][3] > y_max:
-        #         y_max = pin[i][3]
-        # # 判断x_min和y_min和x_max和y_max所占的面积是否占比超过0.4
-        # img = cv2.imread(f'{DATA_BOTTOM_CROP}/pinmap.jpg')
-        # if (x_max - x_min) * (y_max - y_min) / img.shape[0] * img.shape[1] > 0.4:
-        #     crop_img_save(f'{DATA_BOTTOM_CROP}/pinmap.jpg', f'{DATA_BOTTOM_CROP}/pinmap.jpg', max(int(x_min) - 1, 0),
-        #                   max(int(y_min) - 1, 0), min(int(x_max) + 1, img.shape[1]),
-        #                   min(int(y_max) + 1, img.shape[0]))
-        #     print("经过yolox辅助得到pinmap")
-        # except:
-        #     pass
-    else:
-        print("在单张bottom中找不到外框")
-        shutil.copy(path_crop, path_img)
-
-        pin_map_limation_1 = begain_output_bottom_pin_location()
-        path_img = 'bga_bottom/bottom.jpg'
-        # filter_black_point(path_img, path_img)
-        path_crop = 'data_bottom_crop/pinmap.jpg'
-        x_min = int(pin_map_limation_1[0][0])
-        y_min = int(pin_map_limation_1[0][1])
-        x_max = int(pin_map_limation_1[0][2])
-        y_max = int(pin_map_limation_1[0][3])
-        crop_img_save(path_img, path_crop, x_min, y_min, x_max, y_max)
-        np.savetxt('yolox_data/pin_map_limation.txt', pin_map_limation_1, delimiter=',')
-
-        # pin = onnx_output_pairs_data_pin_5(path_crop)
-        # # pin中找x_min和y_min和x_max和y_max
-        # x_min = 9999
-        # y_min = 9999
-        # x_max = 0
-        # y_max = 0
-        # for i in range(len(pin)):
-        #     if pin[i][0] < x_min:
-        #         x_min = pin[i][0]
-        #     if pin[i][1] < y_min:
-        #         y_min = pin[i][1]
-        #     if pin[i][2] > x_max:
-        #         x_max = pin[i][2]
-        #     if pin[i][3] > y_max:
-        #         y_max = pin[i][3]
-        # # 判断x_min和y_min和x_max和y_max所占的面积是否占比超过0.4
-        # img = cv2.imread(f'{DATA_BOTTOM_CROP}/pinmap.jpg')
-        # if (x_max - x_min) * (y_max - y_min) / img.shape[0] * img.shape[1] > 0.4:
-        #     crop_img_save(f'{DATA_BOTTOM_CROP}/pinmap.jpg', f'{DATA_BOTTOM_CROP}/pinmap.jpg', max(int(x_min) - 1, 0),
-        #                   max(int(y_min) - 1, 0), min(int(x_max) + 1, img.shape[1]),
-        #                   min(int(y_max) + 1, img.shape[0]))
-        #     print("经过yolox辅助得到pinmap")
-    # 清空文件夹
 
 
 def filter_a_b_old(a):
@@ -789,329 +709,223 @@ def remove_min_max(lst):
 
 
 def find_line(a, ave_width, test_mode):
+    # test_mode = True # 调试开关
 
-    '''
-    a:记录滤波后x轴或者y轴上每一个像素位置的像素投影 list[int,int]
-    '''
-    # test_mode = True  # 测试模式
-    # 寻找突变点
-    c = []  # 记录突然变小的点
-    mean1 = int(sum(a) / len(a))
+    # --- 1. 寻找突变点 (保留原逻辑) ---
+    c = []
+    mean1 = int(sum(a) / len(a)) if len(a) > 0 else 0
     for i in range(len(a) - 1):
         if a[i] > 0 and a[i + 1] == 0:
             c.append(mean1 * 3)
         else:
             c.append(0)
     c.append(0)
-    if test_mode:
-        print("c", c)
-        print("len(c)", len(c))
 
-    d = []  # 记录突然变大的点
+    d = []
     d.append(0)
     for i in range(1, len(a)):
         if a[i - 1] == 0 and a[i] > 0:
             d.append(mean1 * 3)
         else:
             d.append(0)
-    # 如果一个点既突然变大又突然变小，删除该点
+
     for i in range(len(c)):
         if c[i] != 0 and d[i] != 0:
             c[i] = 0
             d[i] = 0
-    if test_mode:
-        print("d", d)
-        print("len(d)", len(d))
-    # 取两个突变点的中间
-    # e = -1
-    # f = -1
-    g = [0 for i in range(len(c))]
-    # h = 0
-    # x = 0
 
+    # --- 2. 初始网格生成 (保留原逻辑) ---
+    g = [0 for i in range(len(c))]
     for i in range(len(c)):
         if c[i] > 0:
             e = i
             for j in range(i + 1, len(c)):
                 if d[j] != 0:
                     f = j
-                    # 当整行整列缺pin时，网格不能划分为中间
                     if abs(e - f) > 2 * ave_width:
-                        g[e + 1] = mean1 * 9
-                        g[f - 1] = mean1 * 9
+                        # 间隔过大不直接连，保留两端
+                        if e + 1 < len(g): g[e + 1] = mean1 * 9
+                        if f - 1 >= 0: g[f - 1] = mean1 * 9
                         break
                     else:
-                        g[int((e + f) * 0.5)] = mean1 * 9
-                        # h += abs(e - f)
-                        # x += 1
+                        idx = int((e + f) * 0.5)
+                        if idx < len(g): g[idx] = mean1 * 9
                         break
-    if test_mode:
-        print("g", g)
-        print("len(g)", len(g))
-    # 根据网格线的普遍规律，重组为规范的网格
-    # 根据相邻网格差值的众数作为平均网格宽度，划分网格
-    wangge = []  # 记录每个网格的位置
-    find_num_list = []
+
+    # --- 3. 提取初始坐标 ---
+    wangge = []
     for i in range(len(g)):
         if g[i] > 0:
             wangge.append(i)
 
-    # ======================================
-    # 新增：异常端点修正逻辑（插入位置：提取wangge后，计算find_num_list前）
-    # ======================================
-    if test_mode:
-        print("初始wangge（修正前）:", wangge)
+    if not wangge:
+        return g, []
 
-    if len(wangge) >= 3:  # 确保有足够坐标进行修正
-        # 1. 计算初始间距，筛选稳定间距（±25%偏差阈值）
-        initial_gaps = [wangge[i + 1] - wangge[i] for i in range(len(wangge) - 1)]
-        if test_mode:
-            print("初始间距:", initial_gaps)
+    # --- 4. 计算标准间距 num (保留原逻辑) ---
+    # 这里加一个去重排序，防止初始就有重复点
+    wangge = sorted(list(set(wangge)))
 
-        if len(initial_gaps) >= 2:
-            median_gap = statistics.median(initial_gaps)
-            if test_mode:
-                print("间距中位数:", median_gap)
-
-            # 稳定间距：与中位数偏差≤25%，剔除极端异常
-            stable_gaps = [gap for gap in initial_gaps if 0.75 * median_gap <= gap <= 1.25 * median_gap]
-            if test_mode:
-                print("稳定间距（剔除异常后）:", stable_gaps)
-
-            if len(stable_gaps) >= 1:
-                # target_gap = statistics.mode(stable_gaps)  # 目标稳定间距（如31）
-                target_gap = max(stable_gaps)
-                if test_mode:
-                    print("目标稳定间距:", target_gap)
-
-                corrected_wangge = wangge.copy()
-                # 2. 正向遍历：修正左侧异常端点（56→81→87）
-                for i in range(len(corrected_wangge) - 1):
-                    current_gap = corrected_wangge[i + 1] - corrected_wangge[i]
-                    # 异常判定：间距 < 目标间距的85%（放宽阈值，确保25、26被识别）
-                    if current_gap < 0.85 * target_gap:
-                        if test_mode:
-                            print(
-                                f"发现左侧异常：{corrected_wangge[i]}→{corrected_wangge[i + 1]}（间距{current_gap}），修正为{corrected_wangge[i]}→{corrected_wangge[i] + target_gap}")
-                        # 用稳定间距重新计算右侧端点
-                        corrected_right = corrected_wangge[i] + target_gap
-                        # 确保修正后不超过下下个坐标（避免越界）
-                        if i + 2 < len(corrected_wangge) and corrected_right < corrected_wangge[i + 2]:
-                            corrected_wangge[i + 1] = corrected_right
-
-                # 3. 反向遍历：修正右侧异常端点（185→211→180）
-                for i in range(len(corrected_wangge) - 1, 0, -1):
-                    current_gap = corrected_wangge[i] - corrected_wangge[i - 1]
-                    if current_gap < 0.85 * target_gap:
-                        if test_mode:
-                            print(
-                                f"发现右侧异常：{corrected_wangge[i - 1]}→{corrected_wangge[i]}（间距{current_gap}），修正为{corrected_wangge[i] - target_gap}→{corrected_wangge[i]}")
-                        # 用稳定间距重新计算左侧端点
-                        corrected_left = corrected_wangge[i] - target_gap
-                        # 确保修正后不小于前前个坐标
-                        if i - 2 >= 0 and corrected_left > corrected_wangge[i - 2]:
-                            corrected_wangge[i - 1] = corrected_left
-
-                # 去重、排序，更新wangge为修正后的值
-                corrected_wangge = sorted(list(set(corrected_wangge)))
-                wangge = corrected_wangge
-                if test_mode:
-                    print("修正后wangge:", wangge)
-    # ======================================
-    # 原有逻辑：计算间距列表find_num_list（基于修正后的wangge）
-    # ======================================
+    find_num_list = []
     for i in range(len(wangge) - 1):
         find_num_list.append(abs(wangge[i] - wangge[i + 1]))
-    if test_mode:
-        print("find_num_list", find_num_list)
 
     find_num_list = remove_min_max(find_num_list)
-    num = statistics.mode(find_num_list)
-    if test_mode:
-        print("网格间距众数为:", num)
 
-    # num = 0
-    # for i in range(len(wangge) - 1):
-    #     num += wangge[i + 1] - wangge[i]
-    # num = int(num / (len(wangge) - 1))  # 网格的普遍间隔
-    if test_mode:
-        print("网格的普遍间隔num", num)
-    '''
-    1.找符合网格普遍间隔的线
-    2.针对这些线往左右看，推理出正确位置
-    '''
-    # img = cv2.imread(f'{DATA_BOTTOM_CROP}/pinmap.jpg')
-    new_wangge = []
-    # for i in range(len(wangge) - 1):
-    #     # print(round(img.shape[0]/200))
-    #     # print(abs((wangge[i + 1] - wangge[i]) - num))
-    #     # print(round(img.shape[0]/100))
-    #     if round(img.shape[0] / 200) <= abs((wangge[i + 1] - wangge[i]) - num) <= round(img.shape[0] / 100):
-    #         if wangge[i] not in new_wangge:
-    #             new_wangge.append(wangge[i])
-    #         if wangge[i + 1] not in new_wangge:
-    #             new_wangge.append(wangge[i + 1])
-    if test_mode:
-        print("wangge", wangge)
-        print("new_wangge", new_wangge)
-    # 解决筛选网格为空造成的死循环问题
-    if new_wangge == []:
-        new_wangge = wangge
-    for m in range(5):
+    if not find_num_list:
+        num = ave_width if ave_width > 0 else 20
+    else:
+        try:
+            num = statistics.mode(find_num_list)
+        except:
+            num = int(sum(find_num_list) / len(find_num_list))
+
+    if num <= 0: num = 20
+
+    if test_mode: print("计算出的标准间距 num:", num)
+
+    # ==========================================
+    # --- 5. 核心修复：基于原思想的补全循环 ---
+    # ==========================================
+    new_wangge = wangge.copy()
+
+    # 限制最大循环次数，防止极端情况死锁 (原代码死循环就在这里)
+    for m in range(10):
         out_key = 0
-        acc = 0
+        changed_this_round = False  # 标记这一轮有没有改动
+
         while out_key != 1:
-            loc = 0  # 记录需要插入的新位置
-            new_new_wangge = []
+            inserted = False
+            # 遍历每一个间距
+            # 注意：倒序遍历或者每次插入后 break 重新开始，防止索引混乱。
+            # 这里采用你原来的策略：插入后 break，重新 while
             for i in range(len(new_wangge) - 1):
-                if i == len(new_wangge) - 2:
-                    out_key = 1
-                if acc == 1:
-                    if i == loc:
-                        if abs(new_wangge[i + 1] - new_wangge[i] - num) / num > 0.5:
-                            loc_1 = int(new_wangge[i] + num)
-                            loc_2 = int(new_wangge[i] + num)
-                            loc_1n = 0
-                            loc_2n = 0
-                            try:
-                                while a[loc_1] != 0:
-                                    loc_1 += 1
-                                    loc_1n += 1
-                                    if loc_1 == int(new_wangge[i + 1] - 0.5 * num):
-                                        loc_1 = -1
-                                        loc_1n = 999
-                                        break
-                            except:
-                                loc_1 -= 1
-                            try:
-                                while a[loc_2] != 0:
-                                    loc_2 -= 1
-                                    loc_2n += 1
-                                    if loc_2 == int(new_wangge[i] + 0.5 * num):
-                                        loc_2 = -1
-                                        loc_2n = 999
-                                        break
-                            except:
-                                loc_2 += 1
-                            if loc_1 == loc_2 == -1:
-                                loc = int((new_wangge[i] + new_wangge[i + 1]) * 0.5)
-                            else:
-                                if loc_1n < loc_2n:
-                                    loc = loc_1
-                                else:
-                                    loc = loc_2
-                            new_wangge.append(loc)
-                            new_wangge.sort()
-                            break
-                else:
+                gap = new_wangge[i + 1] - new_wangge[i]
 
-                    if abs(new_wangge[i + 1] - new_wangge[i] - num) / num > 0.5:
-                        acc = 1
-                        loc_1 = int(new_wangge[i] + num)
-                        loc_2 = int(new_wangge[i] + num)
-                        loc_1n = 0
-                        loc_2n = 0
-                        try:
-                            while a[loc_1] != 0:
-                                loc_1 += 1
+                # 【关键修复】：
+                # 原条件：abs(gap - num)/num > 0.5  -> 既杀大也杀小，导致死循环
+                # 新条件：gap > num * 1.5          -> 只杀大（缺线），不理会小（杂波）
+                if gap > num * 1.5:
 
-                                loc_1n += 1
-                                if loc_1 == int(new_wangge[i + 1] - 0.5 * num):
-                                    loc_1 = -1
-                                    loc_1n = 999
-                                    break
-                        except:
-                            loc_1 -= 1
-                        try:
-                            while a[loc_2] != 0:
-                                loc_2 -= 1
-                                loc_2n += 1
-                                if loc_2 == int(new_wangge[i] + 0.5 * num):
-                                    loc_2 = -1
-                                    loc_2n = 999
-                                    break
-                        except:
-                            loc_2 += 1
-                        if loc_1 == loc_2 == -1:
-                            loc = int((new_wangge[i] + new_wangge[i + 1]) * 0.5)
-                        else:
-                            if loc_1n < loc_2n:
-                                loc = loc_1
-                            else:
-                                loc = loc_2
-                        new_wangge.append(loc)
-                        new_wangge.sort()
-                        break
+                    # 理论上的插入点（均匀位置）
+                    ideal_loc = int(new_wangge[i] + num)
 
-    if test_mode:
-        print("new_wangge", new_wangge)
-    # 为网格找到起始线
-    leng = len(g)
-    while new_wangge and new_wangge[0] > num:
-        loc_1 = int(new_wangge[0] - num)
-        loc_2 = int(new_wangge[0] - num)
-        loc_1n = 0
-        loc_2n = 0
-        try:
-            while a[loc_1] != 0:
-                loc_1 -= 1
-                loc_1n += 1
-        except:
-            loc_1 += 1
-        try:
-            while a[loc_2] != 0:
-                loc_2 += 1
-                loc_2n += 1
-        except:
-            loc_2 -= 1
-        if loc_1n < loc_2n or abs(new_wangge[0] - loc_2) < num * 0.5:
-            loc = loc_1
+                    # 定义搜索范围：只在理论位置左右 num*0.3 范围内找波峰
+                    # 这样保证了“均匀性”，不会被远处的杂波带偏
+                    search_radius = int(num * 0.3)
+
+                    # --- 既然是原思想，保留 loc_1 和 loc_2 的搜索逻辑 ---
+
+                    # 1. 向右看 (loc_1)
+                    loc_1 = ideal_loc
+                    loc_1n = 0
+                    # 在小范围内微调
+                    search_start = max(new_wangge[i] + 1, ideal_loc - search_radius)
+                    search_end = min(new_wangge[i + 1] - 1, ideal_loc + search_radius)
+
+                    # 尝试找波峰 (a[x] > 0)
+                    # 优先找离 ideal_loc 最近的波峰
+                    best_dist = 9999
+                    found_peak = False
+
+                    for x in range(search_start, search_end):
+                        if x < len(a) and a[x] > 0:
+                            dist = abs(x - ideal_loc)
+                            if dist < best_dist:
+                                best_dist = dist
+                                loc_1 = x
+                                loc_1n = dist  # 用距离作为权重
+                                found_peak = True
+
+                    if not found_peak:
+                        loc_1n = 999  # 没找到波峰，权重降低
+
+                    # 2. 向左看 (loc_2) - 其实在确定性补全里，向左向右通常指向同一个区域
+                    # 为了保留原代码逻辑结构，我们这里假设 loc_2 也是找同一个区域
+                    # 但原代码 loc_2 是 new_wangge[i] + num 从右往左搜，loc_1 是从左往右搜
+                    # 我们简化一下：如果 loc_1 找到了波峰，就用波峰；没找到，就用 ideal_loc
+
+                    final_loc = loc_1 if found_peak else ideal_loc
+
+                    # 执行插入
+                    if final_loc not in new_wangge:
+                        new_wangge.insert(i + 1, final_loc)  # 直接插在当前点后面
+                        inserted = True
+                        changed_this_round = True
+                        break  # 跳出 for，重新计算 gap
+
+            if not inserted:
+                out_key = 1  # 这一轮检查完毕，没有需要插入的了
+
+        if not changed_this_round:
+            break  # 如果这一大轮都没有任何变动，说明已经稳态，彻底结束
+
+    # --- 6. 边缘扩展 (Start & End) ---
+    # 这部分保持均匀性非常重要，强制按 num 扩展
+
+    # 向左扩展
+    safety = 0
+    while new_wangge and new_wangge[0] > num * 0.8:  # 只要左边还有空间
+        safety += 1
+        if safety > 50: break
+
+        target = int(new_wangge[0] - num)
+        # 在 target 附近找波峰
+        best_loc = target
+        min_dist = 999
+        found = False
+        start_s = max(0, target - int(num * 0.3))
+        end_s = min(new_wangge[0] - 1, target + int(num * 0.3))
+
+        for x in range(start_s, end_s):
+            if x < len(a) and a[x] > 0:
+                d_val = abs(x - target)
+                if d_val < min_dist:
+                    min_dist = d_val
+                    best_loc = x
+                    found = True
+
+        # 如果找到波峰且不重叠，用波峰；否则用理论位置
+        insert_val = best_loc if found else target
+        if insert_val >= 0 and insert_val < new_wangge[0]:
+            new_wangge.insert(0, insert_val)
         else:
-            loc = loc_2
-        new_wangge.append(loc)
-        if test_mode:
-            print("new_wangge", new_wangge)
-        new_wangge.sort()
-    while leng - 1 - new_wangge[len(new_wangge) - 1] > num:
-        loc_1 = int(new_wangge[len(new_wangge) - 1] + num)
-        loc_2 = int(new_wangge[len(new_wangge) - 1] + num)
-        loc_1n = 0
-        loc_2n = 0
-        try:
-            while a[loc_1] != 0:
-                loc_1 += 1
-                loc_1n += 1
-        except:
-            loc_1 -= 1
-        try:
-            while a[loc_2] != 0:
-                loc_2 -= 1
-                loc_2n += 1
-        except:
-            loc_2 += 1
-        if loc_1n < loc_2n or abs(new_wangge[len(new_wangge) - 1] - loc_2) < num * 0.5:
-            loc = loc_1
+            break  # 防止死循环
+
+    # 向右扩展
+    safety = 0
+    leng = len(a)
+    while new_wangge and (leng - 1 - new_wangge[-1]) > num * 0.8:
+        safety += 1
+        if safety > 50: break
+
+        target = int(new_wangge[-1] + num)
+        best_loc = target
+        min_dist = 999
+        found = False
+        start_s = max(new_wangge[-1] + 1, target - int(num * 0.3))
+        end_s = min(leng - 1, target + int(num * 0.3))
+
+        for x in range(start_s, end_s):
+            if x < len(a) and a[x] > 0:
+                d_val = abs(x - target)
+                if d_val < min_dist:
+                    min_dist = d_val
+                    best_loc = x
+                    found = True
+
+        insert_val = best_loc if found else target
+        if insert_val < leng and insert_val > new_wangge[-1]:
+            new_wangge.append(insert_val)
         else:
-            loc = loc_2
-        new_wangge.append(loc)
-        if test_mode:
-            print("new_wangge", new_wangge)
-        new_wangge.sort()
-    if new_wangge[0] / num > 0.8:
-        new_wangge.append(0)
-        new_wangge.sort()
-    # 为网格找到终点线
-    if (leng - 1 - new_wangge[len(new_wangge) - 1]) / num > 0.8:
-        new_wangge.append(leng - 1)
-    if test_mode:
-        print("new_wangge", new_wangge)
+            break
+
+    # --- 7. 输出 ---
     new_g = [0 for i in range(len(c))]
     for i in range(len(new_g)):
         if i in new_wangge:
             new_g[i] = 9999
-    if test_mode:
-        print("new_g", new_g)
-    return new_g
+
+    return new_g, wangge
 
 
 def empty_folder(folder_path):
@@ -1564,74 +1378,74 @@ def judge_singular_point(arr, color_map, test_mode):
     #                 color_map[i][j] = 3
     return arr, color_map
 
-# def output_color(color_map):
+# # def output_color(color_map):
+# #
+# #     for i in range(len(color_map)):
+# #         for j in range(len(color_map[i])):
+# #             if color_map[i][j] == 0:
+# #                 color_map[i][j] =
+# #             elif color_map[i][j] == 1:
+# #                 color_map[i][j] = 2
+# #             elif color_map[i][j] == 2:
+# #                 color_map[i][j] = 3
+# #             elif color_map
 #
-#     for i in range(len(color_map)):
-#         for j in range(len(color_map[i])):
-#             if color_map[i][j] == 0:
-#                 color_map[i][j] =
-#             elif color_map[i][j] == 1:
-#                 color_map[i][j] = 2
-#             elif color_map[i][j] == 2:
-#                 color_map[i][j] = 3
-#             elif color_map
-
-def find_right_img():
-    # 检测文件夹下有几张图片
-    path =BGA_BOTTOM
-    filelist = os.listdir(path)
-
-    if len(filelist) == 0:
-        # 从data文件夹把bottom.jpg复制到bga_bottom文件夹下
-        print("在三视图中没有找到外框")
-        shutil.copyfile(f'{DATA}/bottom.jpg', f'{BGA_BOTTOM}/bottom.jpg')
-
-    filelist = os.listdir(path)
-    if len(filelist) == 1:
-        # 将文件夹bga_bottom下唯一一张图片改名为bottom.jpg
-        os.rename(path + '/' + filelist[0], f'{BGA_BOTTOM}/bottom.jpg')
-        get_pinmap()
-
-    if len(filelist) == 2:
-        print("在三视图中找到两个外框")
-        img_path1 = path + '/' + filelist[0]
-        pin1 = onnx_output_pairs_data_pin_5(img_path1)
-        img_path2 = path + '/' + filelist[1]
-        pin2 = onnx_output_pairs_data_pin_5(img_path2)
-        if len(pin1) > len(pin2):
-            pin = pin1
-            os.remove(img_path2)
-            # 改图片名为pinmap.jpg
-            shutil.copyfile(img_path1, f'{DATA_BOTTOM_CROP}/pinmap.jpg')
-
-        else:
-            pin = pin2
-            os.remove(img_path1)
-            shutil.copyfile(img_path2, f'{DATA_BOTTOM_CROP}/pinmap.jpg')
-            # os.rename(img_path2, r'data_bottom_crop/pinmap.jpg')
-
-        # pin中找x_min和y_min和x_max和y_max
-
-        x_min = 9999
-        y_min = 9999
-        x_max = 0
-        y_max = 0
-        for i in range(len(pin)):
-            if pin[i][0] < x_min:
-                x_min = pin[i][0]
-            if pin[i][1] < y_min:
-                y_min = pin[i][1]
-            if pin[i][2] > x_max:
-                x_max = pin[i][2]
-            if pin[i][3] > y_max:
-                y_max = pin[i][3]
-        # 判断x_min和y_min和x_max和y_max所占的面积是否占比超过0.4
-        img = cv2.imread(f'{DATA_BOTTOM_CROP}/pinmap.jpg')
-        if (x_max - x_min) * (y_max - y_min) / img.shape[0] * img.shape[1] > 0.4:
-            crop_img_save(f'{DATA_BOTTOM_CROP}/pinmap.jpg', f'{DATA_BOTTOM_CROP}/pinmap.jpg', max(int(x_min) - 1, 0),
-                          max(int(y_min) - 1, 0), min(int(x_max) + 1, img.shape[1]),
-                          min(int(y_max) + 1, img.shape[0]))
-            print("经过yolox辅助得到pinmap")
+# def find_right_img():
+#     # 检测文件夹下有几张图片
+#     path =BGA_BOTTOM
+#     filelist = os.listdir(path)
+#
+#     if len(filelist) == 0:
+#         # 从data文件夹把bottom.jpg复制到bga_bottom文件夹下
+#         print("在三视图中没有找到外框")
+#         shutil.copyfile(f'{DATA}/bottom.jpg', f'{BGA_BOTTOM}/bottom.jpg')
+#
+#     filelist = os.listdir(path)
+#     if len(filelist) == 1:
+#         # 将文件夹bga_bottom下唯一一张图片改名为bottom.jpg
+#         os.rename(path + '/' + filelist[0], f'{BGA_BOTTOM}/bottom.jpg')
+#         get_pinmap()
+#
+#     if len(filelist) == 2:
+#         print("在三视图中找到两个外框")
+#         img_path1 = path + '/' + filelist[0]
+#         pin1 = onnx_output_pairs_data_pin_5(img_path1)
+#         img_path2 = path + '/' + filelist[1]
+#         pin2 = onnx_output_pairs_data_pin_5(img_path2)
+#         if len(pin1) > len(pin2):
+#             pin = pin1
+#             os.remove(img_path2)
+#             # 改图片名为pinmap.jpg
+#             shutil.copyfile(img_path1, f'{DATA_BOTTOM_CROP}/pinmap.jpg')
+#
+#         else:
+#             pin = pin2
+#             os.remove(img_path1)
+#             shutil.copyfile(img_path2, f'{DATA_BOTTOM_CROP}/pinmap.jpg')
+#             # os.rename(img_path2, r'data_bottom_crop/pinmap.jpg')
+#
+#         # pin中找x_min和y_min和x_max和y_max
+#
+#         x_min = 9999
+#         y_min = 9999
+#         x_max = 0
+#         y_max = 0
+#         for i in range(len(pin)):
+#             if pin[i][0] < x_min:
+#                 x_min = pin[i][0]
+#             if pin[i][1] < y_min:
+#                 y_min = pin[i][1]
+#             if pin[i][2] > x_max:
+#                 x_max = pin[i][2]
+#             if pin[i][3] > y_max:
+#                 y_max = pin[i][3]
+#         # 判断x_min和y_min和x_max和y_max所占的面积是否占比超过0.4
+#         img = cv2.imread(f'{DATA_BOTTOM_CROP}/pinmap.jpg')
+#         if (x_max - x_min) * (y_max - y_min) / img.shape[0] * img.shape[1] > 0.4:
+#             crop_img_save(f'{DATA_BOTTOM_CROP}/pinmap.jpg', f'{DATA_BOTTOM_CROP}/pinmap.jpg', max(int(x_min) - 1, 0),
+#                           max(int(y_min) - 1, 0), min(int(x_max) + 1, img.shape[1]),
+#                           min(int(y_max) + 1, img.shape[0]))
+#             print("经过yolox辅助得到pinmap")
 
 
 def yolox_find_waikuang(location):
@@ -1793,193 +1607,305 @@ def crop_pin_map_y(a,w,h, test_mode):
         print("b", a)
     return a, ave_width
 
+def get_pin_status_geometry(pin_map, test_mode=False):
+    """
+    【几何法核心】基于 Blob 分析的 Pin 检测
+    不比对相似度，直接检测网格内是否存在符合 BGA 焊球几何特征的连通域。
+    特征包括：面积占比、长宽比(圆度)、居中度。
+    """
+    path = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
+    img = cv2.imread(path)
+
+    if img is None:
+        print(f"Error: 无法读取 {path}")
+        return np.zeros(pin_map.shape[:2]), np.zeros(pin_map.shape[:2])
+
+    # 转灰度
+    if len(img.shape) == 3:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = img
+
+    rows, cols = pin_map.shape[:2]
+
+    # 初始化结果矩阵
+    pin_result_map = np.zeros((rows, cols))
+    color_result_map = np.zeros((rows, cols))
+
+    # ================= 核心阈值参数 (可根据实际情况微调) =================
+    # 1. 面积阈值：连通域面积占网格总面积的比例 (排除噪点和背景)
+    MIN_AREA_RATIO = 0.08  # 至少占 8%
+    MAX_AREA_RATIO = 0.99  # 不能占满 90% (占满通常是背景)
+
+    # 2. 长宽比 (Aspect Ratio): w/h
+    # 圆形或圆角矩形的长宽比接近 1.0。太长或太扁通常是丝印线条。
+    MIN_ASPECT_RATIO = 0.5
+    MAX_ASPECT_RATIO = 2.0
+
+    # 3. 填充度 (Solidity): 轮廓面积 / 外接矩形面积
+    # 圆形的填充度约为 pi/4 ≈ 0.785，正方形为 1.0。
+    # 复杂的噪点或细线条通常填充度很低。
+    MIN_SOLIDITY = 0.4
+
+    # 4. 居中度：轮廓中心必须在网格的中心区域
+    # 允许偏离中心的幅度 (0.3 表示允许偏离 30% 的宽高)
+    CENTER_TOLERANCE = 0.5
+    # ===================================================================
+
+    for i in range(rows):
+        for j in range(cols):
+            # 【重要】使用 [:4] 防止解包错误
+            try:
+                coords = pin_map[i][j][:4]
+                x1, y1, x2, y2 = map(int, coords)
+            except:
+                continue  # 数据异常跳过
+
+            # 越界保护
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(img.shape[1], x2), min(img.shape[0], y2)
+
+            # 1. 裁剪单个网格
+            cell = gray[y1:y2, x1:x2]
+            cell_h, cell_w = cell.shape
+            cell_area = cell_h * cell_w
+
+            if cell_area < 10:  # 忽略极小网格
+                continue
+
+            # 2. 局部自适应二值化 (Otsu)
+            # 这能解决全图光照不均问题，每个格子自己决定黑白阈值
+            try:
+                thresh_val, binary = cv2.threshold(cell, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            except:
+                continue
+
+            # 3. 极性校正 (Polarity Check)
+            # 假设 Pin 是“少数派”。如果二值化后白色像素超过 60%，说明背景被识别为白色了
+            # 此时反转图像，确保 Pin 是白色的前景
+            white_ratio = cv2.countNonZero(binary) / cell_area
+            if white_ratio > 0.6:
+                binary = cv2.bitwise_not(binary)
+
+            # 4. 轮廓提取
+            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            is_pin = False
+
+            # 5. 遍历轮廓进行几何筛选
+            for cnt in contours:
+                # --- 特征 A: 面积 ---
+                area = cv2.contourArea(cnt)
+                if area < cell_area * MIN_AREA_RATIO or area > cell_area * MAX_AREA_RATIO:
+                    continue
+
+                # --- 特征 B: 外接矩形与长宽比 ---
+                x, y, w, h = cv2.boundingRect(cnt)
+                aspect_ratio = float(w) / h
+                if aspect_ratio < MIN_ASPECT_RATIO or aspect_ratio > MAX_ASPECT_RATIO:
+                    continue
+
+                # --- 特征 C: 填充度 (可选，增强稳定性) ---
+                solidity = area / float(w * h)
+                if solidity < MIN_SOLIDITY:
+                    continue
+
+                # --- 特征 D: 居中度 (关键) ---
+                # Pin 肯定在网格中间，而在边缘的通常是相邻格子的干扰或丝印
+                cnt_cx = x + w / 2
+                cnt_cy = y + h / 2
+                cell_cx = cell_w / 2
+                cell_cy = cell_h / 2
+
+                # 计算偏离距离
+                diff_x = abs(cnt_cx - cell_cx)
+                diff_y = abs(cnt_cy - cell_cy)
+
+                if diff_x > cell_w * CENTER_TOLERANCE or diff_y > cell_h * CENTER_TOLERANCE:
+                    continue
+
+                # 如果所有条件都满足，认定为 Pin
+                is_pin = True
+                break
+
+                # 6. 记录结果
+            if is_pin:
+                pin_result_map[i][j] = 1
+                color_result_map[i][j] = 2  # 2 代表普通 Pin
+            else:
+                pin_result_map[i][j] = 0
+                color_result_map[i][j] = 0  # 0 代表背景
+
+    if test_mode:
+        count = np.sum(pin_result_map)
+        print(f"几何法检测完成，共发现 {int(count)} 个 Pin")
+
+    return pin_result_map, color_result_map
 
 def find_pin_core():
     test_mode = False
-    # 读取图片
-    image1 = cv2.imread(f'{DATA_BOTTOM_CROP}/pinmap.jpg')
-    # 灰度图像
+    path = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
+
+    # 读取图片并二值化（用于垂直投影）
+    image1 = cv2.imread(path)
+    if image1 is None:
+        print("找不到图片:", path)
+        return np.array([])
     gray = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
-    # 二值化
-    ret, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-    (h, w) = binary.shape  # 返回高和宽
-    # 垂直投影
+    _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+    h, w = binary.shape[:2]
+
+    # 垂直投影 a（每列黑点计数）
     vproject = binary.copy()
-    a = [0 for x in range(0, w)]
-    # 记录每一列的波峰
-    for j in range(0, w):  # 遍历一列
-        for i in range(0, h):  # 遍历一行
-            if vproject[i, j] == 0:  # 如果改点为黑点
-                a[j] += 1  # 该列的计数器加1计数
-                vproject[i, j] = 255  # 记录完后将其变为白色
+    a = [0 for _ in range(w)]
+    for j in range(w):
+        for i in range(h):
+            if vproject[i, j] == 0:
+                a[j] += 1
+                vproject[i, j] = 255
 
+    # 垂直投影可视化处理（保留第一个黑点位置）
     vproject_copy = vproject.copy()
-    for j in range(0, w):  # 遍历每一列
-        for i in range((h - a[j]), h):  # 从该列应该变黑的最顶部的点开始向最底部涂黑
-            try:
-                vproject_copy[i, j] = 0  # 涂黑
-            except:
-                pass
-    if test_mode:
-        cv2.namedWindow('vproject', cv2.WINDOW_NORMAL)
-        cv2.imshow("vproject", vproject_copy)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+    for j in range(w):
+        if a[j] > 0:
+            for i in range(h):
+                if vproject_copy[i, j] == 255:
+                    vproject_copy[i, j] = 0
+                    break
 
-    # 滤波
-    # print("垂直投影", a)
+    # 滤波 a
     a = filter_a_b(a)
-    for j in range(0, w):  # 遍历每一列
-        for i in range((h - a[j]), h):  # 从该列应该变黑的最顶部的点开始向最底部涂黑
-            try:
-                vproject[i, j] = 0  # 涂黑
-            except:
-                pass
-    if test_mode:
-        cv2.namedWindow('vproject', cv2.WINDOW_NORMAL)
-        cv2.imshow("vproject", vproject)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+    for j in range(w):
+        if a[j] > 0:
+            for i in range(h):
+                if vproject[i, j] == 255:
+                    vproject[i, j] = 0
+                    break
 
-    # 寻找PIN map准确位置并沿着边缘裁剪为完整PINmap
-    a, a_ave_width = crop_pin_map_x(a, w, h,test_mode)
-    # print("滤波后垂直投影", a)
-    # 找网格
-    c = find_line(a, a_ave_width, test_mode)
+    # 显示垂直投影（调试）
+    # cv2.namedWindow('vproject', cv2.WINDOW_NORMAL)
+    # cv2.imshow("vproject", vproject)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
+    # 不裁剪 X 方向：直接使用平均宽度作为 ave_width，保持 a 不变
+    a_ave_width = average_width_of_positive_intervals(a)
+    if test_mode:
+        print("垂直投影平均宽度（未裁剪）:", a_ave_width)
+
+    # 找网格（传入未裁剪的 a 与平均宽度）
+    c, c_original = find_line(a, a_ave_width, test_mode)
+    print(f"\n垂直方向网格线统计:")
+    print(f"  补全前原始网格线数量: {len(c_original)} 条")
+    c_lines_count = sum(1 for x in c if x > 0)
+    print(f"  补全后网格线数量: {c_lines_count} 条")
     a = [i + j for i, j in zip(a, c)]
 
-    # 读取图片
-    image1 = cv2.imread(f'{DATA_BOTTOM_CROP}/pinmap.jpg')
-    # 灰度图像
+    # -- 水平投影 b（同样不裁剪 Y 方向） --
+    image1 = cv2.imread(path)
     gray = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
-    # 二值化
-    ret, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
-    (h, w) = binary.shape  # 返回高和宽
-    # # 垂直投影
-    # vproject = binary.copy()
-    # # a = [0 for x in range(0, w)]
-    # # 记录每一列的波峰
-    # for j in range(0, w):  # 遍历一列
-    #     for i in range(0, h):  # 遍历一行
-    #         if vproject[i, j] == 0:  # 如果改点为黑点
-    #             a[j] += 1  # 该列的计数器加1计数
-    #             vproject[i, j] = 255  # 记录完后将其变为白色
+    _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+    h, w = binary.shape[:2]
 
-    for j in range(0, w):  # 遍历每一列
-        for i in range((h - a[j]), h):  # 从该列应该变黑的最顶部的点开始向最底部涂黑
-            try:
-                vproject[i, j] = 0  # 涂黑
-            except:
-                pass
-    # cv2.putText(vproject, "verticality", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (100, 100, 100), 4)
-    # 水平投影
-    hproject = binary.copy()
-    b = [0 for x in range(0, h)]
-    for j in range(0, h):
-        for i in range(0, w):
-            if hproject[j, i] == 0:
+    hproject = np.ones((h, w), dtype=np.uint8) * 255
+    b = [0 for _ in range(h)]
+    for j in range(h):
+        for i in range(w):
+            if binary[j, i] == 0:
                 b[j] += 1
-                hproject[j, i] = 255
-    # 滤波
-    # print("水平投影", b)
+                hproject[j, i] = 0
+
+    # 滤波 b 并可视化第一个黑点位置
     b = filter_a_b(b)
-    # print("滤波后水平投影", b)
-    b, b_ave_width = crop_pin_map_y(b, w, h, test_mode)
-    # 找网格
-    d = find_line(b, b_ave_width, test_mode)
+    hproject_filtered = np.ones((h, w), dtype=np.uint8) * 255
+    for j in range(h):
+        if b[j] > 0:
+            for i in range(w):
+                if hproject[j, i] == 255:
+                    hproject_filtered[j, i] = 0
+                    break
+
+    # cv2.namedWindow('hproject_filtered', cv2.WINDOW_NORMAL)
+    # cv2.imshow("hproject_filtered", hproject_filtered)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
+    # 不裁剪 Y 方向：直接计算平均宽度，保持 b 不变
+    b_ave_width = average_width_of_positive_intervals(b)
+    if test_mode:
+        print("水平投影平均宽度（未裁剪）:", b_ave_width)
+
+    d, d_original = find_line(b, b_ave_width, test_mode)
+    print(f"\n水平方向网格线统计:")
+    print(f"  补全前原始网格线数量: {len(d_original)} 条")
+    d_lines_count = sum(1 for x in d if x > 0)
+    print(f"  补全后网格线数量: {d_lines_count} 条")
     b = [i + j for i, j in zip(b, d)]
 
-    # 读取图片
-    image1 = cv2.imread(f'{DATA_BOTTOM_CROP}/pinmap.jpg')
-    # 灰度图像
-    gray = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
-    # 二值化
-    ret, binary = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY)
-    (h, w) = binary.shape  # 返回高和宽
-    # # 垂直投影
-    # vproject = binary.copy()
-    # a = [0 for x in range(0, w)]
-    # # 记录每一列的波峰
-    # for j in range(0, w):  # 遍历一列
-    #     for i in range(0, h):  # 遍历一行
-    #         if vproject[i, j] == 0:  # 如果改点为黑点
-    #             a[j] += 1  # 该列的计数器加1计数
-    #             vproject[i, j] = 255  # 记录完后将其变为白色
+    # 统计网格线数用于生成 pin_map
+    c_lines_count = sum(1 for x in c if x > 0)
+    d_lines_count = sum(1 for x in d if x > 0)
+    print(f"\n网格线统计（用于生成pin_map）:")
+    print(f"  垂直方向网格线数量: {c_lines_count} 条")
+    print(f"  水平方向网格线数量: {d_lines_count} 条")
+    print(f"  预期网格大小: {d_lines_count-1}行 × {c_lines_count-1}列")
 
-    for j in range(0, h):
-        for i in range(0, b[j]):
-            try:
-                hproject[j, i] = 0
-            except:
-                pass
-    # cv2.putText(hproject, "horizontal", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (100, 100, 100), 4)
-    # 一次显示四张图，两行两列，第一张是data/bottom.jpg，第二张图是image1，第三张是vproject，，第四张是hproject
-    if test_mode:
-        cv2.imshow("image1", image1)
-        cv2.namedWindow('vproject', cv2.WINDOW_NORMAL)
-        cv2.imshow("vproject", vproject)
-        cv2.namedWindow('hproject', cv2.WINDOW_NORMAL)
-        cv2.imshow("hproject", hproject)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-    # 存储网格
+    # 生成 pin_map 并后续处理（保持原流程）
     pin_map = get_pin_grid(a, b, c, d, test_mode)
-    # # 显示各个网格
-    # print("显示网格》》》》》》》》》》》》》》》》》》》》》》")
+    print(f"  实际生成的pin_map大小: {pin_map.shape[0]}行 × {pin_map.shape[1]}列")
+
     # show_pin_grid(pin_map, c, d)
-    # # 计算各个网格中的信息熵
     pin_map_wangge = pin_map.copy()
 
-
     pin_map = cal_grid_shang(pin_map, test_mode)
-    # 每张网格中的图片与pin1和pin2比较相似度
-    # pin_map = compare_pin_2(pin_map, pin_map_wangge)
-    #灰度方差
-    # pin_map = cal_gray_variance(pin_map)
-    # 将信息熵高的网格内容提取，计算两两之间的图片相似度，选取最多相似的网格类型作为模板，筛选所有信息熵高的网格，删除掉相似度低于阈值的网格
-    pin_map, color_map = compare_pin(pin_map, pin_map_wangge,  test_mode)
-    print("打印PIN图")
-    print(pin_map)
-    print(color_map)
-    # 根据熵输出每个网格是否存在pin
-    # pin_map = output_pin(pin_map)
-    # # 裁剪pinmap
+    pin_map, color_map = compare_pin(pin_map, pin_map_wangge, test_mode)
+
+
+
+    # pin_map, color_map = get_pin_status_geometry(pin_map, test_mode=True)
+    print_engineering(pin_map)
+
     pin_map, color_map = cut_pinmap(pin_map, color_map, test_mode)
-    # 判断是否存在奇异点
     pin_map, color_map = judge_singular_point(pin_map, color_map, test_mode)
 
-    # output_color(color_map)
     output = np.vstack((pin_map, color_map))
-    # print("out", output)
     return output
 
-def compare_pin_2(pin_map, pin_map_wangge):
-    path1 = f'{DATA_BOTTOM_CROP}/pinmap.jpg'
-    img = cv2.imread(path1, 0)
-    path2 = f'Result/pin1.jpg'
-    path3 = f'Result/pin2.jpg'
-    img_pin1 = cv2.imread(path2)
-    img_pin2 = cv2.imread(path3)
-    row, col = pin_map.shape
-    pin_compare1 = np.zeros((row, col))
-    pin_compare2 = np.zeros((row, col))
-    for i in range(row):
-        for j in range(col):
 
-            img1 = img[int(pin_map_wangge[i][j][1]): int(pin_map_wangge[i][j][3]),
-                   int(pin_map_wangge[i][j][0]): int(pin_map_wangge[i][j][2])]
-            # 归一化img1为20*20分辨率
-            img1 = cv2.resize(img1, (20, 20))
-            # hash1 = dHash(img1)
-            # hash2 = dHash(img2)
-            # n = cmpHash(hash1, hash2)
-            n = classify_hist_with_split(img1, img_pin1)
-            pin_compare1[i][j] = np.round(n, 2)
-            n = classify_hist_with_split(img1, img_pin2)
-            pin_compare2[i][j] = np.round(n, 2)
-    print("pin_compare1", pin_compare1)
-    print("pin_compare2", pin_compare2)
+def print_engineering(matrix):
+    cols = len(matrix[0])
+
+    print("\n--- BGA Engineering View (Wider Horizontal) ---")
+
+    # === 1. 打印列号 (关键：凑够3个字符宽度) ===
+    print("    ", end="")  # 左边留白给行号 "XX |"
+    for i in range(1, cols+1):
+        if i < 10:
+            # 单个数字前后加空格，凑3位居中： " 0 ", " 1 "
+            print(f" {i} ", end="")
+        else:
+            # 两位数字后加一个空格，凑3位： "10 ", "11 "
+            print(f"{i} ", end="")
+
+    # 分割线也要变宽，每个列对应3个横杠
+    print("\n    " + "---" * cols)
+
+    # === 2. 打印每一行 ===
+    for r_idx, row in enumerate(matrix):
+        # 打印行号
+        print(f"{r_idx+1:2d} |", end="")
+
+        # 打印数据 (关键：每个单元格占3个字符宽度)
+        for val in row:
+            if val == 1:
+                # 实心圆 + 2个空格，拉宽间距
+                print("●  ", end="")
+            else:
+                # 3个空格占位
+                print("   ", end="")
+
+                # 换行 (只需要一个正常换行)
+        print()
 
 def compare_pin(pin_map, pin_map_wangge, test_mode):
     '''
@@ -2062,7 +1988,7 @@ def compare_pin(pin_map, pin_map_wangge, test_mode):
 
                 pin_compare_2[i][j] = n
                 # if n > 0.7:
-                if n > 0.5:
+                if n > 0.4:
                     pin_map_compare[i][j] = 1
                     color_array[i][j] = 2
                 else:
@@ -2110,13 +2036,13 @@ def find_pin(bottom_border):
     os.makedirs(result_path('Package_extract', 'bga'))
     empty_folder(BGA_BOTTOM)
     os.makedirs(BGA_BOTTOM)
-    # bga_bottom中如果存在两张图片，yolox检测，保留pin数量多的存为pinmap.jpg
-    print("border:", bottom_border)
-    key = yolox_find_waikuang(bottom_border)
-    if key:
-        get_waikaung()
-        find_right_img()
-    #get_pinmap()
+    # # bga_bottom中如果存在两张图片，yolox检测，保留pin数量多的存为pinmap.jpg
+    # print("border:", bottom_border)
+    # key = yolox_find_waikuang(bottom_border)
+    # if key:
+    #     get_waikaung()
+    #     find_right_img()
+    get_pinmap()
     output_list = find_pin_core()
     return output_list
 
@@ -2682,7 +2608,7 @@ def extract_BGA_PIN():
 
     # ============ 计算 loss_pin（使用 pinmap）============
     pin_map, color = time_save_find_pinmap(bottom_border)
-    print("pin_map", pin_map)
+    # print("pin_map", pin_map)
 
     # 计算 pin_1_location（保持正确率）
     # 简化逻辑：根据序列号/字母位置推断起始角
@@ -2727,7 +2653,7 @@ def long_running_task(result_queue, bottom_border):
 
 
 if __name__ == '__main__':
-    pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color = extract_BGA_PIN()
+    pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color, rot = extract_BGA_PIN()
     print(pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color)
 
     # output_list = find_pin_core()

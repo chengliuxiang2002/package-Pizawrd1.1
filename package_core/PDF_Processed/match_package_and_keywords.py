@@ -133,13 +133,16 @@ def get_detr_view_results(detr_result,page_num):
 #     return keyview_results
 
 
-def match_keywords_for_all_pages(pdf_path, page_list, detection_results):
+def match_keywords_for_all_pages(pdf_path, page_list, detection_results, rotation_dict=None):
     """
     替代旧的 run_keyword_matching 循环。
     接收原始DETR结果，返回一个被修改后的新副本。
     """
     # 创建一个深拷贝以避免修改原始输入字典
     modified_results = copy.deepcopy(detection_results)
+
+    if rotation_dict is None:
+        rotation_dict = {}
 
     keywords = ["BGA", "DFN", "SON", "QFP", "QFN", "SOP", "SOT", "SOIC", "BALL GRID ARRAY", "Plastic Quad Flat Package",
                 "Quad Flatpack", "TOPVIEW", "SIDEVIEW", "BOTTOMVIEW", "TOP VIEW", "SIDE VIEW", "BOTTOM VIEW", "TOP", "SIDE",
@@ -150,8 +153,11 @@ def match_keywords_for_all_pages(pdf_path, page_list, detection_results):
         json.dump([], f, ensure_ascii=False, indent=2)
 
     for page_num in page_list:
+        # 获取当前页的旋转角度，如果没有则默认为 0
+        current_rot = rotation_dict.get(page_num, 0)
+
         # 注意：现在将 modified_results 传入
-        page_results = process_page_keywords(pdf_path, page_num, keywords, modified_results)
+        page_results = process_page_keywords(pdf_path, page_num, keywords, modified_results, rotation=current_rot)
         match_package_with_type(pdf_path, page_num, page_results, modified_results)
         match_package_with_view(page_num, page_results, modified_results)
         remove_title(page_num, page_results)
@@ -358,20 +364,41 @@ def process_non_editable_page_with_package_titles(pdf_path,detr_result, page_num
     return get_detr_view_results(detr_result,page_num)
 
 
-def process_page_keywords(pdf_path, page_num, keywords, detr_result):
+def process_page_keywords(pdf_path, page_num, keywords, detr_result, rotation=0):
     """
-    判断页面是否可编辑，获取所有关键字，去重，合并视图关键字，并进行类型和视图关键字匹配
+    判断页面是否可编辑，获取所有关键字...
+    :param rotation: 页面图片的旋转角度 (默认为0)
     """
     is_editable = is_page_editable(pdf_path, page_num)
 
     all_title_results = []
     if is_editable:
         results = search_keywords_in_editable_page(pdf_path, page_num, keywords)
+
+        # --- 如果存在旋转，对 fitz 提取的原始坐标进行变换 ---
+        if rotation != 0:
+            try:
+                # 需要重新打开 PDF 获取页面尺寸用于计算
+                doc = fitz.open(pdf_path)
+                page = doc[page_num]
+                w, h = page.rect.width, page.rect.height
+                doc.close()
+
+                for res in results:
+                    original_coords = res['coordinates']
+                    # 注意：UI类中传入的是 -rot，这里直接透传该角度即可
+                    # PIL rotate 的角度定义：正数为逆时针
+                    res['coordinates'] = rotate_rect(original_coords, rotation, w, h)
+                    # print(f"校正坐标: {res['keyword']} {original_coords} -> {res['coordinates']} (Rot: {rotation})")
+            except Exception as e:
+                print(f"坐标旋转转换失败: {e}")
+        # -----------------------------------------------------------
+
         found_keywords = set(result['keyword'] for result in results)
         view_keywords_present = any(kw in found_keywords for kw in
                                     ["TOP", "SIDE", "VIEW", "TOP VIEW", "SIDE VIEW", "TOPVIEW", "SIDEVIEW"])
 
-        # 处理可编辑但不存在view关键字,合并可编辑页面结果和DETR检测结果中的视图关键字
+        # 处理可编辑但不存在view关键字...
         if not view_keywords_present:
             detr_view_results = get_detr_view_results(detr_result, page_num)
             results.extend(detr_view_results)
@@ -393,6 +420,53 @@ def process_page_keywords(pdf_path, page_num, keywords, detr_result):
 
     return all_results
 
+
+def rotate_rect(rect, angle, page_width, page_height):
+    """
+    根据旋转角度转换矩形坐标
+    :param rect: (x0, y0, x1, y1)
+    :param angle: 旋转角度 (与 PIL.Image.rotate 的方向一致，逆时针为正)
+    :param page_width: 原始页面宽度
+    :param page_height: 原始页面高度
+    :return: 旋转后的 (new_x0, new_y0, new_x1, new_y1)
+    """
+    x0, y0, x1, y1 = rect
+
+    # 规范化角度到 0-360
+    angle = angle % 360
+
+    # PIL rotate expand=True 后的坐标变换逻辑
+    if angle == 90:  # 逆时针 90 度
+        # 新宽=原高, 新高=原宽
+        # (x, y) -> (y, W - x)
+        new_rect = (
+            y0,  # new_x0
+            page_width - x1,  # new_y0
+            y1,  # new_x1
+            page_width - x0  # new_y1
+        )
+    elif angle == 180:  # 180 度
+        # 新宽=原宽, 新高=原高
+        # (x, y) -> (W - x, H - y)
+        new_rect = (
+            page_width - x1,  # new_x0
+            page_height - y1,  # new_y0
+            page_width - x0,  # new_x1
+            page_height - y0  # new_y1
+        )
+    elif angle == 270:  # 逆时针 270 度 (即顺时针 90 度, 对应 angle=-90)
+        # 新宽=原高, 新高=原宽
+        # (x, y) -> (H - y, x)
+        new_rect = (
+            page_height - y1,  # new_x0
+            x0,  # new_y0
+            page_height - y0,  # new_x1
+            x1  # new_y1
+        )
+    else:
+        new_rect = rect
+
+    return new_rect
 
 def match_package_with_type(pdf_path, page_num, all_results, detr_result):
     """将package与类型关键字匹配"""

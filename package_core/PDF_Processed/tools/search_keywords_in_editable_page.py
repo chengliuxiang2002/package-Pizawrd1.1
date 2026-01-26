@@ -82,6 +82,18 @@ def search_keywords_in_editable_page(pdf_path, page_num, keywords):
             line_top, line_bottom = find_line_boundaries(y0, y1)
             line_text = get_full_line_text(page, line_top, line_bottom)
             line_text = clean_excel_text(line_text)
+            # ================= [新增/修改部分 START] =================
+            escaped_kw = re.escape(keyword)
+
+            filter_pattern = (
+                fr'[a-zA-Z]{escaped_kw}[a-zA-Z]|'  # 两边夹击
+                fr'[a-zA-Z]{{3,}}{escaped_kw}|'  # 左边太长
+                fr'{escaped_kw}[a-zA-Z]{{3,}}'  # 右边太长
+            )
+
+            # 如果匹配成功，说明是“坏数据”，直接跳过
+            if re.search(filter_pattern, line_text, re.IGNORECASE):
+                continue
 
             font_size = 0
             for span in page.get_text("dict", clip=(x0, y0, x1, y1))["blocks"]:
@@ -149,7 +161,7 @@ def search_keywords_in_editable_page(pdf_path, page_num, keywords):
 
 if __name__ == "__main__":
     # 测试代码
-    pdf_path = r"D:\20250822\PackageWizard1.0_F1\PDF_Processed\PDF\sn74auc1g04.pdf"  # 替换为实际的PDF文件路径
+    pdf_path = r"D:\BGADFNSONQFP\QFP\74ABT16543_4.pdf"  # 替换为实际的PDF文件路径
     page_num = 13 # 要处理的页码
     keywords = ["BGA", "DFN", "SON", "QFP", "QFN", "SOP","SOT", "Quad Flat Package","TOPVIEW","TOP VIEW", "SIDEVIEW","SIDE VIEW","TOP","SIDE","VIEW","DETAIL"]
 

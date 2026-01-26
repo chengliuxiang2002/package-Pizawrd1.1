@@ -11,8 +11,7 @@ from package_core.Table_Processed.Table_function.dataProcess import (
 from package_core.Table_Processed.Table_function.getBoder import *
 from package_core.Table_Processed.Table_function.dataProcess import *
 from package_core.Table_Processed.Table_function.Tool import *
-from operator import itemgetter
-from functools import lru_cache
+
 
 
 # ==================== PDF 文档缓存管理 ====================
@@ -382,7 +381,7 @@ def judge_if_complete_table(table, packageType):
             if re.search(r'\(\d+\)', str(table[i][j])):
                 table[i][j] = re.sub(r'\(\d+\)', '', str(table[i][j]))
             if table[i][j] == 'A_A': count += 1
-            if table[i][j] == 'eD' or table[i][j] == 'eE': count += 1
+            if table[i][j] == 'eD' or table[i][j] == 'eE' or table[i][j] == '0': count += 1
             if table[i][j] == 'Φb' or table[i][j] == 'G' or table[i][j] == 'b/B': count += 1
             if table[i][j] == 'DE': count += 4
             if table[i][j] == 'D/E': count += 2

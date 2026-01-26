@@ -252,7 +252,7 @@ def onnx_inference(img_path, package_classes, weight):
     results = model.predict(
         source=img_path,
         conf=0.1,
-        save=True,
+        save=False,
     )
     # 读取图片
     img_ori = cv2.imread(img_path)
@@ -276,6 +276,8 @@ def onnx_inference(img_path, package_classes, weight):
             final_cls_inds = cls_inds
             
             # 可视化结果
+            print(f'调试索引')
+            print(f'final_cls_inds:{final_cls_inds}')
             origin_img = vis(img_ori, final_boxes, final_scores, final_cls_inds,
                             conf=0.1, class_names=VOC_CLASSES)
         else:

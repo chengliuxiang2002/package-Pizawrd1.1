@@ -595,6 +595,42 @@ def _step_4_generate_labels(X, Y, a1_corner):
     return final_col, final_row
 
 
+def visualize_raw_ocr(image_path: str, boxes: List, texts: List, title: str = "Raw OCR Results"):
+    """
+    轻量级可视化：仅展示OCR原始识别的框和文字
+    """
+    try:
+        img = Image.open(image_path).convert('RGB')
+        plt.figure(figsize=(16, 16))  # 设置大画布以便看清细节
+        ax = plt.gca()
+        ax.imshow(img)
+
+        for i, (box, text) in enumerate(zip(boxes, texts)):
+            # 1. 绘制多边形框 (Box)
+            # box 结构通常为 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+            poly = np.array(box + [box[0]])  # 闭合多边形
+            ax.plot(poly[:, 0], poly[:, 1], color='red', linewidth=1.5, linestyle='-')
+
+            # 2. 找到左上角作为文字锚点
+            x_min = min(p[0] for p in box)
+            y_min = min(p[1] for p in box)
+
+            # 3. 绘制文字 (Text) - 增加白色背景防止文字与图像混淆
+            # 显示格式：索引:文本
+            label = f"{i}:{text}"
+            ax.text(x_min, y_min - 5, label, fontsize=9, color='blue', weight='bold',
+                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=1))
+
+        ax.set_title(title)
+        ax.axis('off')  # 关闭坐标轴干扰
+        plt.tight_layout()
+        plt.show()
+        print(f"✅ [Raw OCR] 已展示 {len(boxes)} 个检测结果")
+
+    except Exception as e:
+        print(f"❌ 原始OCR可视化失败: {e}")
+
+
 # ===================== 9. 主程序入口 =====================
 
 def BGA_get_PIN(image_path: str, visualize: bool = False, min_cluster_len: int = 3) -> Tuple[
@@ -607,6 +643,7 @@ def BGA_get_PIN(image_path: str, visualize: bool = False, min_cluster_len: int =
 
     # Step 1: OCR
     boxes, texts = _step_1_ocr_process(image_path)
+    # visualize_raw_ocr(image_path, boxes, texts, title="Raw OCR Results")
     if not boxes:
         x, y = detr_pin_XY(image_path)
         return [], [], x, y, [], [], "Top-Left", rot

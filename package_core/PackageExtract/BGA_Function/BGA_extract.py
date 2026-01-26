@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Iterable
 import sys
 import os
+import shutil
 
 
 # 获取当前脚本所在目录的绝对路径
@@ -50,6 +51,8 @@ except ModuleNotFoundError:
 
 # 全局路径 - 使用统一的路径管理函数
 DATA = result_path('Package_extract', 'data')
+PACKAGE_EXTRACT = os.path.dirname(DATA) #data的上一级目录
+CLEAN_BOTTOM = result_path('Package_extract' , 'clean_bottom')
 DATA_BOTTOM_CROP = result_path('Package_extract', 'data_bottom_crop')
 DATA_COPY = result_path('Package_extract', 'data_copy')
 ONNX_OUTPUT = result_path('Package_extract', 'onnx_output')
@@ -68,6 +71,68 @@ def tee_print(*args, sep=" ", end="\n"):
     with log_path.open("a", encoding="utf-8") as f:
         f.write(msg)
 
+
+
+import os
+import shutil
+
+def replace_bottom_from_clean_to_data(image_root: str,
+                                      clean_folder: str = "clean_bottom",
+                                      data_folder: str = "data",
+                                      exts=(".jpg", ".jpeg", ".png"),
+                                      verbose: bool = True):
+    """
+    把 image_root/clean_bottom/bottom.* 移动到 image_root/data/ 下，
+    并替换 data 里原有的 bottom.*（若存在则删除）。
+
+    - 若 clean_bottom 里不存在 bottom.*：不抛异常，不终止；打印提示并返回 None
+    - 成功则返回最终写入到 data 的 bottom 文件路径（str）
+    """
+    clean_dir = os.path.join(image_root, clean_folder)
+    data_dir = os.path.join(image_root, data_folder)
+
+    if not os.path.isdir(clean_dir):
+        if verbose:
+            print(f"[WARN] 找不到 clean_bottom 目录: {clean_dir}")
+        return None
+
+    if not os.path.isdir(data_dir):
+        if verbose:
+            print(f"[WARN] 找不到 data 目录: {data_dir}")
+        return None
+
+    # 找 clean_bottom 里的 bottom 文件（优先 jpg，其次 jpeg/png）
+    src_path = None
+    src_ext = None
+    for ext in exts:
+        p = os.path.join(clean_dir, "bottom" + ext)
+        if os.path.isfile(p):
+            src_path = p
+            src_ext = ext
+            break
+
+    if src_path is None:
+        if verbose:
+            print(f"[WARN] {clean_dir} 下未找到 bottom{exts}，跳过替换。")
+        return None
+
+    # 删除 data 里已有的 bottom.*（不管什么后缀）
+    for ext in exts:
+        old = os.path.join(data_dir, "bottom" + ext)
+        if os.path.isfile(old):
+            os.remove(old)
+
+    dst_path = os.path.join(data_dir, "bottom" + src_ext)
+
+    # 移动到 data
+    shutil.move(src_path, dst_path)
+
+    if verbose:
+        print(f"[OK] 已替换 bottom 到: {dst_path}")
+
+    return dst_path
+
+
 def run_f4_pipeline(
     image_root: str,
     package_class: str,
@@ -83,6 +148,9 @@ def run_f4_pipeline(
     :param view_names: 自定义视图顺序；默认为 ``common_pipeline.DEFAULT_VIEWS``。
     :returns: ``dict``，包含 ``L3`` 数据、参数候选列表以及 ``nx``/``ny``。
     """
+
+    #0120新增（将去pin序号后的bottom视图放入data文件夹）
+    replace_bottom_from_clean_to_data(PACKAGE_EXTRACT,'clean_bottom','data')
 
     # 从 image_root 获取视图名称（支持目录和图片文件）
     if os.path.exists(image_root):
@@ -159,11 +227,11 @@ def run_f4_pipeline(
 
 if __name__ == "__main__":
     run_f4_pipeline(
-       
-        image_root=r"D:\\BaiduNetdiskDownload\\PackageWizard1.1\\Result\\Package_extract\\data",
+
+        image_root=r"C:\\Users\\14685\\Desktop\\GitPackage\\PackageWizard1.1\\Result\\Package_extract\\data",
         package_class="BGA",
         key=0,
         test_mode=0
     )
     # 格式：python 脚本路径 >> 输出文件名.txt
-# python -u "D:\BaiduNetdiskDownload\PackageWizard1.1\package_core\PackageExtract\BGA_Function\BGA_extract.py" >> console_output.txt
+# python -u "C:\Users\14685\Desktop\GitPackage\PackageWizard1.1\Result\Package_extract\data" >> console_output.txt

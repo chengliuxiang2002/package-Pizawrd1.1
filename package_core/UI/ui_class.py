@@ -1,4 +1,6 @@
 """一些与主窗口进行交互的ui类，相关样式表"""
+import traceback
+
 from PySide6.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsRectItem, \
     QHBoxLayout, QFileDialog, QMessageBox, QTableWidgetItem, QDialog, QGridLayout, QSpacerItem, \
     QSizePolicy, QLabel, QProgressBar, QPushButton
@@ -500,7 +502,7 @@ class DetectThread(QThread):
             # --- 阶段二 ---
             # 按顺序执行管道的每一步
             raw_detr_results = pipeline.step2_run_detr_detection(page_list)
-            modified_detr_results = pipeline.step3_match_keywords(raw_detr_results, page_list)
+            modified_detr_results = pipeline.step3_match_keywords(raw_detr_results, page_list, rotation_dict=None)
             _, final_data, have_page , _ = pipeline.step4_group_package_components(modified_detr_results)
             self.final_package_data = final_data if final_data is not None else []
             self.final_have_page = have_page if have_page is not None else []
@@ -528,6 +530,8 @@ class DetectThread(QThread):
 class RecoThread(QThread):
     """识别函数工作线程"""
     signal_end = Signal(int)
+    signal_error = Signal(str)
+
     def __init__(self, window, pdf_path,pdf_page_count,current_package,package,type_dict):
         super(RecoThread, self).__init__(window)
         self.window = window
@@ -608,22 +612,103 @@ class RecoThread(QThread):
                     try:
                         # 重新执行 Step 2, 3, 4
                         raw_detr = pipeline.step2_run_detr_detection(target_page_list, skip_conversion=True)
-                        mod_detr = pipeline.step3_match_keywords(raw_detr, target_page_list)
+
+                        current_rotation_map = {self.current_page: -rot}
+                        mod_detr = pipeline.step3_match_keywords(raw_detr, target_page_list, rotation_dict=current_rotation_map)
                         _, final_data, _, _ = pipeline.step4_group_package_components(mod_detr)
 
                         if final_data and len(final_data) > 0:
                             print("INFO: 坐标修正成功，更新封装数据。")
-                            # 更新 self.current_package 为修正后的数据 (假设取第一个检测到的封装)
-                            self.current_package = final_data[0]
 
-                            # C. 使用新坐标重新执行分割
-                            manage_data, _ = manage_json(self.current_package)  # 刷新 manage_data
-                            package_process(self.current_page, manage_data[0])  # 重新切图
-                            print("INFO: 旋转修正完成，BGA 提取完毕。")
+                            # ==================== 筛选最佳匹配的 package ====================
+                            target_page_num = self.current_page + 1  # 假设 final_data 是 1-based
+                            picked = None
+
+                            # 1.1) 最优先：严格等于 current_page+1
+                            for pkg in final_data:
+                                if pkg and pkg.get("page") == target_page_num:
+                                    picked = pkg
+                                    break
+
+                            # 1.2) 兜底：再尝试 current_page（以防 page 是 0-based）
+                            if picked is None:
+                                for pkg in final_data:
+                                    if pkg and pkg.get("page") == self.current_page:
+                                        picked = pkg
+                                        break
+
+                            # 1.3) 兜底：再用 ±1
+                            if picked is None:
+                                for pkg in final_data:
+                                    p = pkg.get("page")
+                                    if p is not None and p in {target_page_num - 1, target_page_num + 1}:
+                                        picked = pkg
+                                        break
+
+                            if picked is None:
+                                # 如果实在找不到，只能打印警告并取第一个，防止崩溃
+                                print(f"WARN: 旋转后未精确匹配到页码 {target_page_num}，强制使用第一个检测结果。")
+                                picked = final_data[0]
+
+                            # ==================== 恢复相邻页组件 ====================
+                            # picked 是新的检测数据，但它丢失了上一轮可能关联到的相邻页表格(Form)。
+                            # 我们需要从旧的 self.current_package 中把它们找回来。
+
+                            # 2.1 确保新数据有 part_content 列表
+                            if picked.get("part_content") is None:
+                                picked["part_content"] = []
+
+                            # 2.2. 清理新数据中的表格组件 (因为旋转后的表格坐标可能不匹配PDF)
+                            #    保留非 Form 组件 (如果有的话)
+                            picked["part_content"] = [
+                                p for p in picked["part_content"]
+                                if p.get("part_name") != "Form"
+                            ]
+
+                            # 2.3. 从旧数据中提取 **所有** 表格组件 (Form)
+                            #    无论它是当前页还是相邻页，都直接复用旧的，因为用户确认旧表格数据是正确的。
+                            old_parts = self.current_package.get("part_content", [])
+                            old_forms = [
+                                p for p in old_parts
+                                if p.get("part_name") == "Form"
+                            ]
+
+                            # 2.4. 合并回去并排序
+                            if old_forms:
+                                picked["part_content"].extend(old_forms)
+                                # 按页码排序，确保列表整洁 (e.g. 36 -> 37 -> 38)
+                                picked["part_content"].sort(key=lambda x: int(x.get("page", 0)))
+                                print(f"INFO: 已完全恢复 {len(old_forms)} 个旧表格组件(Form)，并丢弃了旋转后的新表格数据。")
+
+                            # ==================== 更新全局数据 ====================
+                            self.current_package = picked  # ✅ 正式覆盖
+
+                            # 防御性补全
+                            if self.current_package.get("reco_content") is None:
+                                self.current_package["reco_content"] = []
+                            if self.current_package.get("part_content") is None:
+                                self.current_package["part_content"] = []
+
+                            # ==================== 执行后续处理 ====================
+                            manage_data, _ = manage_json(self.current_package)
+                            package_information = manage_data[0]
+
+                            if not package_information:
+                                print("ERROR: manage_json 返回空信息，跳过切图")
+                            else:
+                                # ✅ (你的代码) 动态获取实际存在的 key，避免 Key Error
+                                use_page = next(iter(package_information.keys()))
+                                print(f"DEBUG: package_information keys = {list(package_information.keys())}, use_page = {use_page}")
+
+                                # ✅ 用 use_page 进行切图
+                                package_process(use_page, package_information)
+                                print("INFO: 旋转修正完成，BGA 提取完毕。")
+
                         else:
                             print("ERROR: 旋转后 DETR 未检测到有效封装，将使用原始数据继续。")
                     except Exception as e:
                         print(f"ERROR: 修正流程出错: {e}，将使用原始数据继续。")
+                        traceback.print_exc()
                 else:
                     print("ERROR: 图片旋转失败，跳过修正。")
             if package_type == 'QFP':
@@ -639,7 +724,12 @@ class RecoThread(QThread):
                 exists = any(part['part_name'] == 'Form' for part in self.current_package['part_content'])
                 if exists:
                     # 表格提取
-                    current_table = manage_data[1][self.current_page]
+                    # 0121修改：兼容 1-based key
+                    table_dict = manage_data[1]
+                    current_table = table_dict.get(self.current_page)
+                    if current_table is None:
+                        current_table = table_dict.get(self.current_page + 1)  # 兼容 1-based key
+
                     page_Number_List, Table_Coordinate_List = adjust_table_coordinates(self.current_page, current_table)
                 else:
                     print('数字提取')
@@ -716,7 +806,15 @@ class RecoThread(QThread):
             print(f"DEBUG: 最终输出结果 self.result = {self.result}")
             self.signal_end.emit(1)
         except Exception as e:
-            QMessageBox.critical(self.window, '识别出现错误', str(e))
+            # 1. 在控制台打印详细错误堆栈，防止报错被吞掉导致无法调试
+            print("CRITICAL: 识别线程发生异常！")
+            traceback.print_exc()
+
+            # 2. 发送信号给主线程，让主线程去弹窗
+            error_msg = f"识别流程出错:\n{str(e)}"
+            self.signal_error.emit(error_msg)
+            self.signal_end.emit(0)
+            return
         finally:
             # 结束对资源的访问
             pass

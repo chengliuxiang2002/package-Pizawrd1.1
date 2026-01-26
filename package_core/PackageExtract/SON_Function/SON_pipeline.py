@@ -11,90 +11,74 @@ from package_core.PackageExtract.BGA_Function.pre_extract import (
     match_triple_factor,
     targeted_ocr
 )
-
+import re  # 引入正则模块
 # SON数字提取流程
 
 ################################################################################################
+
 def extract_pin_boxes_from_txt(file_path):
     """
     从txt文件中提取引脚框数据
-
-    Args:
-        file_path: txt文件路径
-
-    Returns:
-        tuple: (pin_box, pin_boxh, pin_boxv)
+    适配格式: [x1, y1, x2, y2],[x3, y3, x4, y4]...
     """
-    # 初始化变量
-    pin_boxh = []
-    pin_boxv = []
+    pin_boxes = []
+    pin_box = []
 
     try:
-        with open(file_path, 'r') as file:
-            lines = file.readlines()
+        with open(file_path, 'r', encoding='utf-8') as file:
+            # 读取全部内容并去除首尾空白
+            content = file.read().strip()
 
-            for line in lines:
-                line = line.strip()
+            # 判空处理
+            if not content:
+                return [], []
 
-                # 提取X数据
-                if line.startswith('X:'):
-                    # 去除'X: '前缀
-                    x_data_str = line[2:].strip()
-                    # 分割多个框
-                    boxes_str = x_data_str.split('],[')
+            # --- 核心修改逻辑 ---
+            # 使用正则表达式查找所有被 [] 包裹的内容
+            # r'\[([^\]]+)\]' 的含义是：匹配 '[' 开始，中间是非 ']' 的任意字符，以 ']' 结束
+            matches = re.findall(r'\[([^\]]+)\]', content)
 
-                    for i, box_str in enumerate(boxes_str):
-                        # 清理字符串中的括号和空格
-                        box_str = box_str.replace('[', '').replace(']', '').strip()
-                        # 如果是第一个框且开头有逗号，需要进一步清理
-                        if box_str.startswith(','):
-                            box_str = box_str[1:]
-                        # 分割数字并转换为float
-                        coordinates = [float(coord.strip()) for coord in box_str.split(',')]
-                        # 添加到pin_boxh
-                        pin_boxh.append(coordinates)
+            for match in matches:
+                # match 的内容类似于 "319.00, 105.00, 346.00, 142.00"
+                try:
+                    # 1. 按逗号分割
+                    # 2. 去除每个数字字符串的空格
+                    # 3. 转换为浮点数
+                    # 4. 过滤空字符
+                    coords = [float(x.strip()) for x in match.split(',') if x.strip()]
 
-                # 提取Y数据
-                elif line.startswith('Y:'):
-                    # 去除'Y: '前缀
-                    y_data_str = line[2:].strip()
-                    # 分割多个框
-                    boxes_str = y_data_str.split('],[')
+                    # 确保解析出来的数据不为空
+                    if coords:
+                        pin_boxes.append(coords)
+                except ValueError:
+                    print(f"警告：无法解析的数据片段 -> {match}")
+                    continue
 
-                    for box_str in boxes_str:
-                        # 清理字符串中的括号和空格
-                        box_str = box_str.replace('[', '').replace(']', '').strip()
-                        # 如果是第一个框且开头有逗号，需要进一步清理
-                        if box_str.startswith(','):
-                            box_str = box_str[1:]
-                        # 分割数字并转换为float
-                        coordinates = [float(coord.strip()) for coord in box_str.split(',')]
-                        # 添加到pin_boxv
-                        pin_boxv.append(coordinates)
+        # --- 结果分配逻辑 ---
+        # pin_boxes: 包含文件里所有的框 [[319...], [359...]]
+        # pin_box: 按照您之前的逻辑，通常取第一个框作为主要对象，且包一层列表
 
-        # 从pin_boxh中提取第一个框作为pin_box
-        if pin_boxh:
-            pin_box = [pin_boxh[0]]  # 注意：格式化为列表的列表
+        if pin_boxes:
+            pin_box = [pin_boxes[0]]  # 取第一个框，结果如 [[319.00, ...]]
         else:
             pin_box = []
-            print("警告：X数据为空")
 
-        return pin_box, pin_boxh, pin_boxv
+        return pin_box, pin_boxes
 
     except FileNotFoundError:
         print(f"错误：找不到文件 {file_path}")
-        return [], [], []
+        return [], []
     except Exception as e:
         print(f"读取文件时发生错误：{e}")
-        return [], [], []
+        return [], []
+
 
 def extract_side_A_A1_A3(L3):
     side_yolox_num = find_list(L3, "side_yolox_num")
     side_ocr_data = find_list(L3, "side_ocr_data")
-    side_dbnet_data = find_list(L3, "side_dbnet_data")
     print("调试信息如下")
     print(f'side_ocr_data:{side_ocr_data}')
-    print(f'side_dbnet_data:{side_dbnet_data}')
+    print(f'side_yolox_num:{side_yolox_num}')
     side_A, side_A3, side_A1 = extract_sorted_dimensions(side_ocr_data, side_yolox_num)
     return side_A, side_A3, side_A1
 
@@ -103,7 +87,6 @@ def extract_top_D_E(L3, triple_factor):
     bottom_ocr_data = find_list(L3, "bottom_ocr_data")
     top_border = find_list(L3, "top_border")
     bottom_border = find_list(L3, "bottom_border")
-    top_dbnet_data = find_list(L3, "top_dbnet_data")
     print("调试信息如下")
     print(f'top_ocr_data:{top_ocr_data}')
     print(f'top_border_data:{top_border}')
@@ -111,14 +94,11 @@ def extract_top_D_E(L3, triple_factor):
     if (np.all(np.array(top_D) == 0) or np.all(np.array(top_E) == 0)):
         top_D, top_E = extract_top_dimensions(bottom_border, bottom_ocr_data, triple_factor, 1)
 
-    # if(top_D[1] > top_E[1]):
-    #     top_D, top_E = top_E, top_D
     return top_D, top_E
 
 def extract_bottom_D2_E2(L3, triple_factor, bottom_D, bottom_E):
     bottom_ocr_data = find_list(L3, "bottom_ocr_data")
     bottom_pad = find_list(L3, "bottom_pad")
-    bottom_dbnet_data = find_list(L3, "bottom_dbnet_data")
     print(f'bottom_ocr_data:{bottom_ocr_data}')
     print(f'bottom_pad_data:{bottom_pad}')
     bottom_D2, bottom_E2 = extract_bottom_dimensions(bottom_D, bottom_E, bottom_pad, bottom_ocr_data, triple_factor)
@@ -133,9 +113,6 @@ def extract_bottom_b_L(L3, triple_factor, pin_boxs):
     print(f'bottom_dbnet_data:{bottom_dbnet_data}')
     bottom_b, bottom_L = extract_pin_dimensions(pin_boxs, bottom_ocr_data, triple_factor)
 
-    # if(bottom_D2[1] > bottom_E2[1]):
-    #     bottom_D2, bottom_E2 = bottom_E2, bottom_D2
-
     return bottom_b, bottom_L
 
 def extract_bottom_pitch(L3, triple_factor, pin_box):
@@ -146,6 +123,7 @@ def extract_bottom_pitch(L3, triple_factor, pin_box):
     bottom_pitch = extract_pitch_dimension(pin_box, bottom_ocr_data, triple_factor)
 
     return bottom_pitch
+
 
 def extract_sorted_dimensions(side_ocr_data_list, side_yolox_num):
     """
@@ -188,13 +166,13 @@ def extract_sorted_dimensions(side_ocr_data_list, side_yolox_num):
                 middle_value = dimensions[1]
                 # 只处理中间值小于2的尺寸数组
                 if middle_value < 2:
-                    matched_dimensions.append((dimensions, middle_value))
+                   matched_dimensions.append((dimensions, middle_value))
 
     # 初始化输出值
     side_A = [0, 0, 0]
     side_A3 = [0, 0, 0]
     side_A1 = [0, 0, 0]
-
+    print(matched_dimensions)
     # 按中间值从大到小排序并返回前3个
     if matched_dimensions:
         # 按中间值从大到小排序
@@ -204,19 +182,24 @@ def extract_sorted_dimensions(side_ocr_data_list, side_yolox_num):
         top_dims = [dim_array for dim_array, _ in sorted_dims[:3]]
 
         # 如果不足3个，补充[0,0,0]
-        while len(top_dims) < 3:
-            top_dims.append([0, 0, 0])
+        # while len(top_dims) < 3:
+        #     top_dims.append([0, 0, 0])
 
-        # 分配给输出变量
-        if len(top_dims) > 2:
-            # 长度大于2时，保持原逻辑
+        # 根据不同的数量分配
+        if len(top_dims) >= 3:
+            # 有3个或以上值
             side_A = list(top_dims[0])
-            side_A1 = list(top_dims[2])
-            side_A3 = list(top_dims[1])
-        else:
-            # 长度小于等于2时，按顺序填充
-            side_A = list(top_dims[0]) if len(top_dims) > 0 else [0, 0, 0]
-            side_A1 = list(top_dims[1]) if len(top_dims) > 1 else [0, 0, 0]
+            side_A3 = list(top_dims[-2])
+            side_A1 = list(top_dims[-1])
+        elif len(top_dims) == 2:
+            # 只有2个值
+            side_A = list(top_dims[0])
+            side_A1 = list(top_dims[1])
+            side_A3 = [0, 0, 0]  # 没有第3个值
+        elif len(top_dims) == 1:
+            # 只有1个值
+            side_A = list(top_dims[0])
+            side_A1 = [0, 0, 0]
             side_A3 = [0, 0, 0]
 
     return side_A, side_A3, side_A1
@@ -1533,11 +1516,12 @@ def extract_pin_dimensions(pin_boxs, bottom_ocr_data_list, triple_factor):
     return bottom_b, bottom_L
 
 
-
 def extract_pitch_dimension(pin_box, bottom_ocr_data_list, triple_factor):
     """
     提取pitch尺寸数据
     重构逻辑：严格按照 pin_box 确定的方向进行定向筛选和计算
+    新增功能：根据 arrow_pairs 前四个坐标计算几何方向
+    修改兜底：按 arrow_pairs 长度排序取第2小
     """
 
     # --- 内部辅助函数 ---
@@ -1545,6 +1529,16 @@ def extract_pitch_dimension(pin_box, bottom_ocr_data_list, triple_factor):
         """获取用于排序的标准值（中间值）"""
         vals = element.get('max_medium_min', [])
         return vals[1] if len(vals) > 1 else (vals[0] if len(vals) > 0 else 0)
+
+    def get_arrow_length(element):
+        """获取用于排序的引线长度（arrow_pairs最后一个值）"""
+        pairs = element.get('arrow_pairs')
+        if pairs is not None and len(pairs) > 0:
+            try:
+                return float(pairs[-1])
+            except (ValueError, TypeError):
+                return float('inf')  # 格式错误放到最后
+        return float('inf')  # 没有引线数据的放到最后
 
     def extract_bottom_elements(data):
         """递归提取view_name为'bottom'的元素"""
@@ -1651,16 +1645,32 @@ def extract_pitch_dimension(pin_box, bottom_ocr_data_list, triple_factor):
 
         # 如果匹配成功，创建融合结构B
         if matched and matched_element is not None:
+
+            # --- 方向判定逻辑 ---
+            calculated_direction = matched_element.get('direction', '')
+            arrow_pairs_data = matched_element.get('arrow_pairs', None)
+
+            if arrow_pairs_data is not None and len(arrow_pairs_data) >= 4:
+                try:
+                    ax1, ay1, ax2, ay2 = float(arrow_pairs_data[0]), float(arrow_pairs_data[1]), float(
+                        arrow_pairs_data[2]), float(arrow_pairs_data[3])
+                    adx, ady = abs(ax2 - ax1), abs(ay2 - ay1)
+                    if adx > ady:
+                        calculated_direction = 'horizontal'
+                    elif ady > adx:
+                        calculated_direction = 'vertical'
+                except Exception:
+                    pass
+
             b_element = {
                 'location': matched_element['location'],
-                'direction': matched_element.get('direction', ''),
+                'direction': calculated_direction,
                 'arrow_pairs': matched_element.get('arrow_pairs', None),
-                'max_medium_min': max_medium_min  # 使用OCR的max_medium_min
+                'max_medium_min': max_medium_min
             }
             all_b_elements.append(b_element)
             matched_count += 1
 
-            # 从原始列表中移除已匹配的元素，避免重复匹配
             if matched_element in bottom_with_arrow:
                 bottom_with_arrow.remove(matched_element)
             elif matched_element in bottom_without_arrow:
@@ -1672,14 +1682,12 @@ def extract_pitch_dimension(pin_box, bottom_ocr_data_list, triple_factor):
         print("警告: 未找到匹配的融合元素")
         return pitch
 
-    # 3. 【核心逻辑】判定 Pin Box 的方向和参考距离
-    # 默认为 UNKNOWN，如果有 pin_box 则计算
-    target_direction = "UNKNOWN"  # 'HORIZONTAL' 或 'VERTICAL'
+    # 3. 判定 Pin Box 方向
+    target_direction = "UNKNOWN"
     target_pin_distance = 0.0
 
     if pin_box is not None:
         try:
-            # 数据清洗，兼容不同格式
             box1, box2 = None, None
             if isinstance(pin_box, list):
                 if len(pin_box) == 2 and isinstance(pin_box[0], (list, np.ndarray)):
@@ -1688,74 +1696,58 @@ def extract_pitch_dimension(pin_box, bottom_ocr_data_list, triple_factor):
                     box1, box2 = pin_box[:4], pin_box[4:8]
 
             if box1 is not None and box2 is not None:
-                # 计算中心点
                 c1_x, c1_y = (box1[0] + box1[2]) / 2, (box1[1] + box1[3]) / 2
                 c2_x, c2_y = (box2[0] + box2[2]) / 2, (box2[1] + box2[3]) / 2
+                dx, dy = abs(c2_x - c1_x), abs(c2_y - c1_y)
 
-                dx = abs(c2_x - c1_x)
-                dy = abs(c2_y - c1_y)
-
-                # 判定方向
                 if dx > dy:
                     target_direction = "HORIZONTAL"
                     target_pin_distance = dx
-                    print(f"Pin方向判定: 水平 (dx={dx:.2f} > dy={dy:.2f}),pitch={target_pin_distance}")
+                    print(f"Pin方向判定: 水平, pitch={target_pin_distance:.2f}")
                 else:
                     target_direction = "VERTICAL"
                     target_pin_distance = dy
-                    print(f"Pin方向判定: 垂直 (dy={dy:.2f} >= dx={dx:.2f}),pitch={target_pin_distance}")
+                    print(f"Pin方向判定: 垂直, pitch={target_pin_distance:.2f}")
             else:
-                print(f"Pin Box 格式无法解析: {pin_box}")
+                print(f"Pin Box 格式无法解析")
         except Exception as e:
             print(f"Pin Box 计算出错: {e}")
 
-    # 4. 根据判定出的方向，筛选候选元素 (Candidate Selection)
+    # 4. 筛选候选元素
     candidates = []
-
-    # 定义方向关键词
     h_keys = ['horizontal', 'up', 'down']
     v_keys = ['vertical', 'left', 'right']
 
     if target_direction == "HORIZONTAL":
-        # 筛选水平方向的元素（包含未知方向作为备选）
         candidates = [e for e in all_b_elements if e['direction'].lower() in h_keys]
-        if not candidates:  # 兜底：如果没有明确水平的，尝试包含方向未知的
+        if not candidates:
             candidates = [e for e in all_b_elements if e['direction'].lower() not in v_keys]
-        print(f"执行水平逻辑，筛选出候选元素: {candidates} ")
-
     elif target_direction == "VERTICAL":
-        # 筛选垂直方向的元素
         candidates = [e for e in all_b_elements if e['direction'].lower() in v_keys]
         if not candidates:
             candidates = [e for e in all_b_elements if e['direction'].lower() not in h_keys]
-        print(f"执行垂直逻辑，筛选出候选元素: {candidates} ")
-
     else:
-        # 方向未知，使用所有元素
         candidates = all_b_elements
-        print(f"方向未知，使用所有 {len(candidates)} 个元素")
+
+    print(f"筛选后候选元素: {candidates}")
 
     if not candidates:
         print("筛选后无候选元素，返回默认值")
         return pitch
 
-    # 5. 【统一算法】步骤A：尝试通过引线距离匹配 (Arrow Matching)
+    # 5. 【统一算法】步骤A：尝试通过引线距离匹配
     found_match = False
-    similarity_threshold = 0.15  # 10% 误差
+    similarity_threshold = 0.2
 
-    # 只有当计算出了有效的 pin_distance 时才尝试匹配
     if target_pin_distance > 0:
         best_match = None
         min_diff = float('inf')
+        valid_match_candidates = [c for c in candidates if
+                                  c.get('arrow_pairs') is not None and len(c['arrow_pairs']) > 0]
 
-        print(f"尝试匹配引线距离 (目标: {target_pin_distance:.2f})...")
-
-        for e in candidates:
-            pairs = e.get('arrow_pairs')
-            if pairs is None or len(pairs) == 0:
-                continue
+        for e in valid_match_candidates:
             try:
-                val = float(pairs[-1])  # 取最后一个距离
+                val = float(e['arrow_pairs'][-1])
                 diff = abs(val - target_pin_distance)
                 if diff < min_diff:
                     min_diff = diff
@@ -1763,7 +1755,6 @@ def extract_pitch_dimension(pin_box, bottom_ocr_data_list, triple_factor):
             except:
                 continue
 
-        # 判断最佳匹配是否在阈值内
         limit = target_pin_distance * similarity_threshold
         if best_match and min_diff <= limit:
             pitch = best_match['max_medium_min'].copy()
@@ -1772,23 +1763,36 @@ def extract_pitch_dimension(pin_box, bottom_ocr_data_list, triple_factor):
         else:
             print(f"匹配失败或无合适引线 (最小差异 {min_diff:.2f}). 转入排序逻辑.")
 
-    # 6. 【统一算法】步骤B：排序兜底
-    # 如果步骤A没有找到结果，或者根本没有 pin_box 信息
+    # 6. 【统一算法】步骤B：排序兜底 (基于几何长度)
     if not found_match:
-        print("执行排序逻辑: 按标准值排序取次小值...")
-        # 按中间值排序
-        candidates.sort(key=get_sort_value)
+        print("执行排序逻辑: 按引线长度(arrow_pairs)排序...")
 
-        # 打印调试信息
-        debug_vals = [get_sort_value(x) for x in candidates]
-        print(f"候选值排序结果: {debug_vals}")
+        # 筛选出有有效 arrow_pairs 的候选者参与排序
+        # 如果某个元素没有 arrow_pairs，在下面的排序中会被视为无穷大(放到最后)，或者你可以选择直接过滤掉
 
-        if len(candidates) >= 2:
-            pitch = candidates[1]['max_medium_min'].copy()
-            print("取第2小的值")
+        # 使用辅助函数 get_arrow_length 进行排序
+        candidates.sort(key=get_arrow_length)
+
+        # 打印调试信息：显示排序后的几何长度
+        debug_vals = [get_arrow_length(x) for x in candidates]
+        print(f"基于引线长度的排序结果: {debug_vals}")
+
+        # 过滤掉无法获取长度的元素 (inf)
+        valid_candidates = [c for c in candidates if get_arrow_length(c) != float('inf')]
+
+        if not valid_candidates:
+            # 如果所有候选都没有引线数据，退化回按OCR数值排序
+            print("所有候选均无有效引线数据，退化为按数值大小排序")
+            candidates.sort(key=get_sort_value)
+            pitch = candidates[0]['max_medium_min'].copy() if candidates else [0, 0, 0]
+        elif len(valid_candidates) >= 2:
+            # 有 >= 2 个有效值，取第 2 小
+            pitch = valid_candidates[1]['max_medium_min'].copy()
+            print(f"取第2小的引线长度对应的数值 (Length={get_arrow_length(valid_candidates[1]):.2f})")
         else:
-            pitch = candidates[0]['max_medium_min'].copy()
-            print("元素不足2个，取第1个值")
+            # 只有 1 个有效值，直接取它
+            pitch = valid_candidates[0]['max_medium_min'].copy()
+            print(f"仅有1个有效引线数据，直接选取 (Length={get_arrow_length(valid_candidates[0]):.2f})")
 
     print(f"最终结果: pitch={pitch}")
     print("=== extract_pitch_dimensions 执行结束 ===\n")

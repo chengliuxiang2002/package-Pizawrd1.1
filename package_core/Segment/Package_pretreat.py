@@ -1,8 +1,9 @@
-#F2.分装图预处理流程模块
+# F2.分装图预处理流程模块
 import os.path
 from PIL import ImageEnhance
 import matplotlib
 import copy
+import shutil
 import matplotlib.pyplot as plt
 from package_core.PackageExtract.BGA_Function import BGA_extract
 # from package_core.PackageExtract.BGA_Function import QFN_extract
@@ -15,8 +16,8 @@ matplotlib.use('TkAgg')
 # 外部文件
 from package_core.Segment.Segment_function import *
 from package_core.PackageExtract import QFP_extract
-from package_core.PackageExtract import SOP_extract
 from package_core.PackageExtract import QFN_extract
+from package_core.PackageExtract.SOP_Function import SOP_extract
 from package_core.PackageExtract.SON_Function import SON_extract
 from package_core.PackageExtract.BGA_Function.BGA_cal_pin import extract_BGA_PIN
 
@@ -24,14 +25,18 @@ try:
     from package_core.PackageExtract.yolox_onnx_py.model_paths import yolo_model_path, result_path
 except ModuleNotFoundError:
     from pathlib import Path
+
+
     def yolo_model_path(*parts):
         return str(Path(__file__).resolve().parents[2] / 'model' / 'yolo_model' / Path(*parts))
+
+
     def result_path(*parts):
         return str(Path(__file__).resolve().parents[2] / 'Result' / Path(*parts))
 
 # 使用统一的路径管理
 
-BOTTOM_PACKAGE_TYPES = ['BGA','DFN','DFN_SON', 'SON', 'QFP', 'QFN', 'SOP',  'SOP']
+BOTTOM_PACKAGE_TYPES = ['BGA', 'DFN', 'DFN_SON', 'SON', 'QFP', 'QFN', 'SOP', 'SOP']
 DETR_RESULT = result_path('Package_view', 'DETRPage')
 SEGMENT_RESULT = result_path('Package_view', 'page')
 TEMP_SIDE = yolo_model_path('ExtractPackage', 'side.jpg')
@@ -41,7 +46,7 @@ SEGMENT_SIDE = result_path('Package_view', 'page', 'side.jpg')
 SEGMENT_BOTTOM = result_path('Package_view', 'page', 'bottom.jpg')
 SEGMENT_TOP = result_path('Package_view', 'page', 'top.jpg')
 DETR_IMG = result_path('PDF_extract', 'detr_img')
-PIN_NUM_PATH = result_path('Package_view', 'pin','pin_num.txt')
+PIN_NUM_PATH = result_path('Package_view', 'pin', 'pin_num.txt')
 
 BGA_TABLE = ['Pitch x (el)', 'Pitch y (e)', 'Number of pins along X', 'Number of pins along Y',
              'Package Height (A)', 'Standoff (A1)', 'Body X (E)', 'Body Y (D)', 'Edge Fillet Radius',
@@ -52,9 +57,11 @@ QFN_TABLE = ['Pitch x (el)', 'Pitch y (e)', 'Number of pins along X', 'Number of
              'Thermal X (E2)', 'Thermal Y (D2)']
 QFP_TABLE = ['Number of pins along X', 'Number of pins along Y', 'Package Height (A)', 'Standoff (A1)',
              'Span X (E)', 'Span Y (D)', 'Body X (E1)', 'Body Y (D1)', 'Body draft (θ)', 'Edge Fillet radius',
-             'Lead Length (L)', 'Lead width (b)', 'Lead Thickness (c)', 'Lead Radius (r)', 'Thermal X (E2)', 'Thermal Y (D2)']
+             'Lead Length (L)', 'Lead width (b)', 'Lead Thickness (c)', 'Lead Radius (r)', 'Thermal X (E2)',
+             'Thermal Y (D2)']
 SON_TABLE = ['Pitch (e)', 'Number of pins', 'Package Height (A)', 'Standoff (A1)', 'Pull Back (p)', 'Body X (E)',
-             'Body Y (D)', 'Lead style', 'Lead Length (L)', 'Lead width (b)', 'Lead Height (c)', 'Exclude Pins', 'Thermal X (E2)', 'Thermal Y (D2)']
+             'Body Y (D)', 'Lead style', 'Lead Length (L)', 'Lead width (b)', 'Lead Height (c)', 'Exclude Pins',
+             'Thermal X (E2)', 'Thermal Y (D2)']
 
 
 def package_coordinate_process(current_page, package_information):
@@ -187,7 +194,8 @@ def package_coordinate_process(current_page, package_information):
     print(class_dic)
     return package_img, class_dic
 
-def segment_package(package_img,class_dic, current_page):
+
+def segment_package(package_img, class_dic, current_page):
     """
     :param package_img: 只包含封装信息的图片
     :param class_dic:DETR检测框的中点值{'bottom': [892, 227], 'side': [877, 580], 'side1': [281, 617], 'top': [305, 218]}
@@ -221,8 +229,8 @@ def segment_package(package_img,class_dic, current_page):
             # 对上列表按照第二个元素从小到大排序
             x_list = sorted(processed_list, key=lambda x: x[1])  # 列排序
             y_list = sorted(processed_list, key=lambda y: y[0])  # 行排序
-            x1,x2 = x_list[0][1],x_list[len(x_list) - 1][1]
-            y1,y2 = y_list[0][0],y_list[len(y_list) - 1][0]
+            x1, x2 = x_list[0][1], x_list[len(x_list) - 1][1]
+            y1, y2 = y_list[0][0], y_list[len(y_list) - 1][0]
 
             area = (x2 - x1) * (y2 - y1)
             if area < 25000:
@@ -329,7 +337,8 @@ def segment_package(package_img,class_dic, current_page):
         side1 = f'{SEGMENT_RESULT}/side1.jpg'
         side_combined(side, side1, save_path=SEGMENT_RESULT)
 
-def package_process(current_page,package_information):
+
+def package_process(current_page, package_information):
     """
     对封装图片进行分割操作，并保存命名
     :param current_page: 当前页
@@ -339,24 +348,24 @@ def package_process(current_page,package_information):
     if os.path.exists(SEGMENT_RESULT):
         shutil.rmtree(result_path('Package_view'))
 
-    package_image, class_dic = package_coordinate_process(current_page,package_information)
+    package_image, class_dic = package_coordinate_process(current_page, package_information)
 
     # 显示传入的图像
     # plt.imshow(package_image)
     # plt.show()
     # 分割函数
-    segment_package(package_image,class_dic, current_page)
+    segment_package(package_image, class_dic, current_page)
 
     # 处理意外分割情况
     if os.path.exists(f'{DETR_RESULT}{current_page}/top.jpg'):
-       shutil.move(f'{DETR_RESULT}{current_page}/top.jpg',SEGMENT_TOP)
+        shutil.move(f'{DETR_RESULT}{current_page}/top.jpg', SEGMENT_TOP)
 
     if os.path.exists(f'{DETR_RESULT}{current_page}/bottom.jpg'):
-       shutil.move(f'{DETR_RESULT}{current_page}/bottom.jpg',SEGMENT_BOTTOM)
+        shutil.move(f'{DETR_RESULT}{current_page}/bottom.jpg', SEGMENT_BOTTOM)
 
-    if ( not os.path.exists(SEGMENT_SIDE) )and os.path.exists(f'{DETR_RESULT}{current_page}/side.jpg'):
+    if (not os.path.exists(SEGMENT_SIDE)) and os.path.exists(f'{DETR_RESULT}{current_page}/side.jpg'):
         shutil.move(f'{DETR_RESULT}{current_page}/side.jpg', SEGMENT_SIDE)
-    elif ( not os.path.exists(SEGMENT_SIDE) )and not os.path.exists(f'{DETR_RESULT}{current_page}/side.jpg'):
+    elif (not os.path.exists(SEGMENT_SIDE)) and not os.path.exists(f'{DETR_RESULT}{current_page}/side.jpg'):
         shutil.copy(TEMP_SIDE, SEGMENT_SIDE)
     #
     # # 对分割后的图片按照祁新源要求进行放大处理
@@ -386,9 +395,9 @@ def package_indentify(package_type, current_page):
         out_put = QFN_extract.run_f4_pipeline(destination_folder_path, package_type)
     elif package_type == 'SOP':
         # out_put = SOP_extract.extract_SOP(package_type, current_page)
-        out_put = SOP_extract.run_f4_pipeline_SOP(destination_folder_path, package_type, current_page)
+        out_put = SOP_extract.run_f4_pipeline_SOP(destination_folder_path, package_type)
     elif package_type == 'SON' or package_type == 'DFN' or package_type == 'DFN_SON':
-        out_put = SON_extract.extract_SON(package_type, current_page)
+        out_put = SON_extract.extract_SON(destination_folder_path, package_type)
     elif package_type == 'BGA':
         out_put = BGA_extract.run_f4_pipeline(destination_folder_path, package_type)
     else:
@@ -425,34 +434,41 @@ def write_xy_to_txt(x, file_path, y=None, encoding="utf-8"):
         print(f"写入文件时发生错误：{e}")
 
 
-
 def extract_BGA_pins():
     # 提取BGA引脚数量
-    pin_num_x_serial, pin_num_y_serial, loss_pin,loss_color, rot = extract_BGA_PIN()
-    write_xy_to_txt(pin_num_x_serial,PIN_NUM_PATH, pin_num_y_serial)
+    pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color, rot = extract_BGA_PIN()
+    write_xy_to_txt(pin_num_x_serial, PIN_NUM_PATH, pin_num_y_serial)
 
-    return pin_num_x_serial, pin_num_y_serial, loss_pin,loss_color, rot
+    return pin_num_x_serial, pin_num_y_serial, loss_pin, loss_color, rot
+
 
 def extract_QFP_pins():
     # 提取QFP行列引脚数量
     X, Y = QFP_extract_pins(SEGMENT_BOTTOM)
-    write_xy_to_txt(X,PIN_NUM_PATH, Y)
+    write_xy_to_txt(X, PIN_NUM_PATH, Y)
     return X, Y
+
+
 def extract_QFN_pins():
     # 提取QFN行列引脚数量
     X, Y = QFN_extract_pins(SEGMENT_BOTTOM)
-    write_xy_to_txt(X,PIN_NUM_PATH, Y)
+    write_xy_to_txt(X, PIN_NUM_PATH, Y)
     return X, Y
+
+
 def extract_SOP_pins():
     # 提取SOP引脚总数
     sum = SOP_extract_pins(SEGMENT_BOTTOM)
-    write_xy_to_txt(sum,PIN_NUM_PATH)
+    write_xy_to_txt(sum, PIN_NUM_PATH)
     return sum
+
+
 def extract_SON_pins():
     # 提取SON引脚总数
     sum = SON_extract_pins(SEGMENT_BOTTOM)
-    write_xy_to_txt(sum,PIN_NUM_PATH)
+    write_xy_to_txt(sum, PIN_NUM_PATH)
     return sum
+
 
 # 提供给迪浩的代码借口
 def manage_result(out_put, package_type):
@@ -461,7 +477,7 @@ def manage_result(out_put, package_type):
         del out_list[0]
     result = []
     for out_list in out_put:
-        result1 =  []
+        result1 = []
         for item in out_list:
             if item == '' or item == '-':
                 result1.append(None)
@@ -469,10 +485,10 @@ def manage_result(out_put, package_type):
                 result1.append(item)
         result.append(result1)
 
-    record_json = {"pkg_type":None,"parameters":{}}
+    record_json = {"pkg_type": None, "parameters": {}}
     # record_json[package_type] = {}
     if package_type == 'QFP':
-        for i,key in enumerate(QFP_TABLE):
+        for i, key in enumerate(QFP_TABLE):
             record_json["pkg_type"] = package_type
             record_json["parameters"][key] = result[i]
     if package_type == 'QFN':
@@ -489,7 +505,9 @@ def manage_result(out_put, package_type):
             record_json["parameters"][key] = result[i]
 
     return record_json
-def reco_package(package_type,current_package,current_page,pdf_path):
+
+
+def reco_package(package_type, current_package, current_page, pdf_path):
     from package_core.Table_Processed import Table_extract
 
     Table_Coordinate_List = []
@@ -498,7 +516,7 @@ def reco_package(package_type,current_package,current_page,pdf_path):
     pin_num_x_serial = None
     pin_num_y_serial = None
     # 封装类型
-  
+
     if package_type == 'DFN_SON' or package_type == 'DFN':
         package_type = 'SON'
     # 判断是自动搜索还是手动框选

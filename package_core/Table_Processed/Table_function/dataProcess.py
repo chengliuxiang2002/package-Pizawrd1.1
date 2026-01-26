@@ -257,48 +257,30 @@ def get_texts_UsingOcr(TableImage, tableCoordinate, cellsCoordinate):
     from package_core.Table_Processed.ocr_onnx.OCR_use import ONNX_Use
     words, coordinates = ONNX_Use(TableImage, 'test')
 
-    num_rows = len(cellsCoordinate)
-    num_cols = len(cellsCoordinate[0]) if num_rows > 0 else 0
+    for index in range(coordinates.__len__()):
+        coordinates[index][0] = tableCoordinate[0] + round(coordinates[index][0] * 2 / 4)
+        coordinates[index][1] = tableCoordinate[1] + round(coordinates[index][1] * 2 / 4)
 
-    if not words or not coordinates:
-        return [['' for _ in range(num_cols)] for _ in range(num_rows)]
-
-    # 坐标转换
-    scale_factor = 0.5  # 2/4 = 0.5
-    for coord in coordinates:
-        coord[0] = tableCoordinate[0] + round(coord[0] * scale_factor)
-        coord[1] = tableCoordinate[1] + round(coord[1] * scale_factor)
-
-    # 按 y 坐标排序，相同 y 按 x 排序
-    zipped_list = sorted(zip(words, coordinates), key=lambda x: (x[1][1], x[1][0]))
+    zipped_list = list(zip(words, coordinates))
+    zipped_list = sorted(zipped_list, key=lambda x: x[1][0])
+    zipped_list = sorted(zipped_list, key=lambda x: x[1][1])
     words, coordinates = zip(*zipped_list)
     words, coordinates = list(words), list(coordinates)
 
-    # 初始化表格（使用列表存储，最后合并）
-    table = [[[] for _ in range(num_cols)] for _ in range(num_rows)]
-
-    # 遍历每个文本，找到其所属单元格（考虑合并单元格）
-    for index in range(len(coordinates)):
-        text = words[index]
-        x, y = coordinates[index]
-        # 遍历所有单元格，找到包含该坐标的单元格
-        for i in range(num_rows):
-            for j in range(num_cols):
+    table = [['' for _ in range(len(cellsCoordinate[0]))] for _ in range(len(cellsCoordinate))]
+    for i in range(len(cellsCoordinate)):
+        for j in range(len(cellsCoordinate[0])):
+            for index in range(len(coordinates)):
+                text = words[index]
+                x, y = coordinates[index]
                 x1, y1, x2, y2 = cellsCoordinate[i][j]
                 if x1 <= x <= x2 and y1 <= y <= y2:
-                    table[i][j].append(text)
-                    break  # 找到后跳出内层循环
-            else:
-                continue
-            break  # 找到后跳出外层循环
+                    if table[i][j] == '':
+                        table[i][j] += text
+                    else:
+                        table[i][j] += '_' + text
 
-    # 合并单元格内的文本
-    result = [['' for _ in range(num_cols)] for _ in range(num_rows)]
-    for i in range(num_rows):
-        for j in range(num_cols):
-            result[i][j] = '_'.join(table[i][j]) if table[i][j] else ''
-
-    return result
+    return table
 
 ##1031
 # 矢量方法构建表格

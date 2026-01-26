@@ -11,7 +11,7 @@ from package_core.PackageExtract.BGA_Function.Pin_process.predict import process
     extract_pin_coords, extract_border_coords
 
 try:
-    from package_core.PackageExtract.yolox_onnx_py.model_paths import model_path
+    from package_core.PackageExtract.yolox_onnx_py.model_paths import model_path, result_path
 except ModuleNotFoundError:  # pragma: no cover - 兼容脚本直接运行
     from pathlib import Path
     def model_path(*parts):
@@ -201,6 +201,188 @@ def filter_valid_pins(pin_coords, border_coords):
     return valid_pins
 
 
+# ===================== 核心优化：提取相邻PIN对（适配缺PIN场景） =====================
+def get_bga_adjacent_pins(bga_rows, bga_cols) -> Tuple[List[List[int]], List[List[int]]]:
+    """
+    优化版：提取X/Y方向相邻PIN对，适配缺PIN场景（基于间距筛选，非固定索引）
+    :param bga_rows: 按行分组的PIN列表
+    :param bga_cols: 按列分组的PIN列表
+    :return: (x_adjacent_pairs, y_adjacent_pairs)
+    """
+
+    # 辅助函数：计算两个PIN中心点的水平/垂直距离
+    def get_center_distance(pin1, pin2, is_horizontal=True):
+        c1_x = (pin1[0] + pin1[2]) / 2
+        c1_y = (pin1[1] + pin1[3]) / 2
+        c2_x = (pin2[0] + pin2[2]) / 2
+        c2_y = (pin2[1] + pin2[3]) / 2
+        return abs(c2_x - c1_x) if is_horizontal else abs(c2_y - c1_y)
+
+    # 辅助函数：在目标列表中找间距最小的相邻PIN对
+    def find_min_distance_pair(pin_list, is_horizontal=True):
+        if len(pin_list) < 2:
+            return []
+        min_dist = float('inf')
+        best_pair = []
+        # 遍历所有连续PIN对，计算间距
+        for i in range(len(pin_list) - 1):
+            pin_a = pin_list[i]
+            pin_b = pin_list[i + 1]
+            dist = get_center_distance(pin_a, pin_b, is_horizontal)
+            if dist < min_dist:
+                min_dist = dist
+                best_pair = [pin_a, pin_b]
+        print(f"找到最小间距相邻对，间距：{min_dist:.2f}")
+        return best_pair
+
+    # ========== X方向：中间行 → 找最小水平间距对 ==========
+    x_adjacent_pairs = []
+    if len(bga_rows) >= 1:
+        mid_row_idx = len(bga_rows) // 2
+        target_row = bga_rows[mid_row_idx]
+        # 关键：找目标行中水平间距最小的连续PIN对
+        best_x_pair = find_min_distance_pair(target_row, is_horizontal=True)
+        if best_x_pair:
+            x_adjacent_pairs.append(best_x_pair)
+            print(f"✅ 提取X方向相邻PIN对（第{mid_row_idx + 1}行，最小水平间距）")
+        else:
+            print(f"⚠️  第{mid_row_idx + 1}行无有效相邻PIN对")
+
+    # ========== Y方向：中间列 → 找最小垂直间距对 ==========
+    y_adjacent_pairs = []
+    if len(bga_cols) >= 1:
+        mid_col_idx = len(bga_cols) // 2
+        target_col = bga_cols[mid_col_idx]
+        # 关键：找目标列中垂直间距最小的连续PIN对
+        best_y_pair = find_min_distance_pair(target_col, is_horizontal=False)
+        if best_y_pair:
+            y_adjacent_pairs.append(best_y_pair)
+            print(f"✅ 提取Y方向相邻PIN对（第{mid_col_idx + 1}列，最小垂直间距）")
+        else:
+            print(f"⚠️  第{mid_col_idx + 1}列无有效相邻PIN对")
+
+    return x_adjacent_pairs, y_adjacent_pairs
+
+
+# ===================== 保存函数（保持不变） =====================
+def save_bga_adjacent_pins(x_pairs: List[List[int]], y_pairs: List[List[int]], output_dir: str = None):
+    if output_dir is None:
+        output_path = result_path("Package_view", "pin", "BGA_adjacent_pins.txt")
+    else:
+        output_path = os.path.join(output_dir, "BGA_adjacent_pins.txt")
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    def fmt_pin(pin):
+        return f"[{pin[0]:.2f}, {pin[1]:.2f}, {pin[2]:.2f}, {pin[3]:.2f}]"
+
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            if x_pairs and len(x_pairs[0]) == 2:
+                pin1, pin2 = x_pairs[0]
+                f.write(f"X: {fmt_pin(pin1)},{fmt_pin(pin2)}\n")
+            else:
+                f.write("X: None\n")
+
+            if y_pairs and len(y_pairs[0]) == 2:
+                pin1, pin2 = y_pairs[0]
+                f.write(f"Y: {fmt_pin(pin1)},{fmt_pin(pin2)}\n")
+            else:
+                f.write("Y: None\n")
+
+        print(f"✅ BGA相邻PIN对已保存至：{output_path}")
+    except Exception as e:
+        print(f"❌ 保存失败：{str(e)}")
+
+
+# ===================== 新增：可视化相邻PIN对 =====================
+def visualize_bga_adjacent_pins(image_path: str, pin_boxes: List[List[int]],
+                               x_adjacent_pairs: List[List[int]], y_adjacent_pairs: List[List[int]]):
+    """
+    可视化BGA相邻PIN对（高亮X/Y方向选中的相邻PIN）
+    :param image_path: 图片路径
+    :param pin_boxes: 所有PIN坐标列表 [[x1,y1,x2,y2], ...]
+    :param x_adjacent_pairs: X方向相邻PIN对列表 [[pin1, pin2], ...]
+    :param y_adjacent_pairs: Y方向相邻PIN对列表 [[pin1, pin2], ...]
+    """
+    # 加载图片
+    image = cv2.imread(image_path)
+    if image is None:
+        raise FileNotFoundError(f"无法加载图片：{image_path}")
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    # 创建画布
+    fig, ax = plt.subplots(figsize=(14, 12))
+    ax.imshow(image)
+    ax.set_title("BGA Adjacent Pins Visualization (X:Red, Y:Blue)", fontsize=14, fontweight='bold')
+    ax.axis('off')
+
+    # 辅助函数：计算PIN中心点
+    def get_pin_center(pin):
+        x1, y1, x2, y2 = pin
+        return (x1 + x2) / 2, (y1 + y2) / 2
+
+    # 1. 绘制所有PIN（浅灰色，透明填充）
+    for idx, pin in enumerate(pin_boxes):
+        x1, y1, x2, y2 = pin
+        # 基础PIN框（浅灰，透明）
+        rect = Rectangle((x1, y1), x2 - x1, y2 - y1,
+                        linewidth=1, edgecolor='#cccccc', facecolor='none', alpha=0.5)
+        ax.add_patch(rect)
+        # 标注PIN序号（小号字体）
+        ax.text(x1, y1 - 3, f'P{idx+1}', fontsize=6, color='gray', ha='center')
+
+    # 2. 绘制X方向相邻PIN对（红色高亮）
+    if x_adjacent_pairs and len(x_adjacent_pairs[0]) == 2:
+        pin1, pin2 = x_adjacent_pairs[0]
+        # 绘制PIN1（红框+半透红填充）
+        x1_1, y1_1, x2_1, y2_1 = pin1
+        rect1 = Rectangle((x1_1, y1_1), x2_1 - x1_1, y2_1 - y1_1,
+                         linewidth=3, edgecolor='red', facecolor='red', alpha=0.3)
+        ax.add_patch(rect1)
+        # 绘制PIN2（红框+半透红填充）
+        x1_2, y1_2, x2_2, y2_2 = pin2
+        rect2 = Rectangle((x1_2, y1_2), x2_2 - x1_2, y2_2 - y1_2,
+                         linewidth=3, edgecolor='red', facecolor='red', alpha=0.3)
+        ax.add_patch(rect2)
+        # 绘制相邻连线（红色实线）
+        c1_x, c1_y = get_pin_center(pin1)
+        c2_x, c2_y = get_pin_center(pin2)
+        ax.plot([c1_x, c2_x], [c1_y, c2_y], color='red', linewidth=2, marker='o', markersize=4, label='X Direction (Adjacent)')
+        # 标注X方向
+        mid_x = (c1_x + c2_x) / 2
+        mid_y = (c1_y + c2_y) / 2 - 10
+        ax.text(mid_x, mid_y, 'X →', fontsize=10, color='red', fontweight='bold', ha='center')
+
+    # 3. 绘制Y方向相邻PIN对（蓝色高亮）
+    if y_adjacent_pairs and len(y_adjacent_pairs[0]) == 2:
+        pin1, pin2 = y_adjacent_pairs[0]
+        # 绘制PIN1（蓝框+半透蓝填充）
+        x1_1, y1_1, x2_1, y2_1 = pin1
+        rect1 = Rectangle((x1_1, y1_1), x2_1 - x1_1, y2_1 - y1_1,
+                         linewidth=3, edgecolor='blue', facecolor='blue', alpha=0.3)
+        ax.add_patch(rect1)
+        # 绘制PIN2（蓝框+半透蓝填充）
+        x1_2, y1_2, x2_2, y2_2 = pin2
+        rect2 = Rectangle((x1_2, y1_2), x2_2 - x1_2, y2_2 - y1_2,
+                         linewidth=3, edgecolor='blue', facecolor='blue', alpha=0.3)
+        ax.add_patch(rect2)
+        # 绘制相邻连线（蓝色实线）
+        c1_x, c1_y = get_pin_center(pin1)
+        c2_x, c2_y = get_pin_center(pin2)
+        ax.plot([c1_x, c2_x], [c1_y, c2_y], color='blue', linewidth=2, marker='o', markersize=4, label='Y Direction (Adjacent)')
+        # 标注Y方向
+        mid_x = (c1_x + c2_x) / 2 + 10
+        mid_y = (c1_y + c2_y) / 2
+        ax.text(mid_x, mid_y, 'Y ↓', fontsize=10, color='blue', fontweight='bold', ha='center')
+
+    # 显示图例
+    ax.legend(loc='upper right', fontsize=10)
+    # 调整布局并显示
+    plt.tight_layout()
+    plt.show()
+
+
 def detr_pin_XY(image_path):
     # 使用统一的路径管理加载模型
     ONNX_MODEL_PATH = model_path("yolo_model","pin_detect", "BGA_pin_detect.onnx")
@@ -245,6 +427,12 @@ def detr_pin_XY(image_path):
         x_threshold = int(avg_width / 3)
         bga_rows = group_bga_by_rows(pin_boxes, y_threshold=y_threshold)
         bga_cols = group_bga_by_cols(pin_boxes, x_threshold=x_threshold)
+
+        # 提取并保存相邻PIN对
+        x_pairs, y_pairs = get_bga_adjacent_pins(bga_rows, bga_cols)
+        save_bga_adjacent_pins(x_pairs, y_pairs)
+        # visualize_bga_adjacent_pins(image_path, pin_boxes, x_pairs, y_pairs)
+
         X = len(bga_cols)
         Y = len(bga_rows)
         # visualize_bga_rows(image_path, bga_rows)
