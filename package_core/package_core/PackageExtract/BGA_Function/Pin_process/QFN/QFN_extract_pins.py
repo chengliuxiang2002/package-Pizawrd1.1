@@ -454,9 +454,57 @@ def save_simple_txt(adj_pairs, output_path):
                 p2_str = fmt_pin(adj_pairs['y_pair'][1])
                 f.write(f"Y: {p1_str},{p2_str}\n")
 
-        print(f"TXT 已保存至: {output_path}")
+        # print(f"TXT 已保存至: {output_path}")
     except Exception as e:
         print(f"保存失败: {str(e)}")
+
+
+def save_formatted_sides_txt(classified_pins, output_path):
+    """
+    保存四边坐标，格式为：
+    TOP: [x1,y1,x2,y2],[x1,y1,x2,y2],...
+    BOTTOM: [x1,y1,x2,y2],...
+    """
+    try:
+        # 1. 检查并创建目录
+        dir_name = os.path.dirname(output_path)
+        if dir_name and not os.path.exists(dir_name):
+            os.makedirs(dir_name, exist_ok=True)
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            # 定义处理顺序和排序依据 (0代表x坐标, 1代表y坐标)
+            # Top/Bottom 按照 x (从左到右) 排序
+            # Left/Right 按照 y (从上到下) 排序
+            sides_info = [
+                ('top', 0),
+                ('bottom', 0),
+                ('left', 1),
+                ('right', 1)
+            ]
+
+            for side_name, sort_idx in sides_info:
+                pins = classified_pins.get(side_name, {}).get('pins', [])
+
+                # --- 空间排序 ---
+                sorted_pins = sorted(pins, key=lambda p: p[sort_idx])
+
+                # --- 格式化坐标字符串 ---
+                # 生成如: "[10.5, 20.1, 30.5, 40.2]"
+                pin_strs = []
+                for p in sorted_pins:
+                    # 保留2位小数，逗号分隔
+                    coord_str = "[" + ",".join([f"{v:.2f}" for v in p]) + "]"
+                    pin_strs.append(coord_str)
+
+                # --- 拼接并写入 ---
+                # 结果如: TOP: [..],[..],[..]
+                line_content = ",".join(pin_strs)
+                f.write(f"{side_name.upper()}: {line_content}\n")
+
+        print(f"四边坐标已保存至: {output_path}")
+
+    except Exception as e:
+        print(f"保存TXT失败: {str(e)}")
 
 def QFN_extract_pins(img_path):
     try:
@@ -495,6 +543,10 @@ def QFN_extract_pins(img_path):
         adj_pairs = get_adjacent_pin_pairs(classified_pins)
         txt_output_path = result_path("Package_view","pin","QFN_adjacent_pins.txt")
         save_simple_txt(adj_pairs, txt_output_path)
+
+        # === 保存所有分边坐标 ===
+        all_coords_path = result_path("Package_view", "pin", "QFN_all_sides_coords.txt")
+        save_formatted_sides_txt(classified_pins, all_coords_path)
 
 
 

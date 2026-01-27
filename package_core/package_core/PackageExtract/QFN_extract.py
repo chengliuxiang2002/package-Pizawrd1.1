@@ -7,16 +7,45 @@ import os
 
 # 获取当前脚本所在目录的绝对路径
 current_script_path = os.path.abspath(__file__)
-# 计算项目根目录（PackageWizard1.1）的路径：从当前脚本目录向上退3级
-# （当前脚本在 BGA_Function/ 下，上级是 PackageExtract/，再上级是 package_core/，再上级就是根目录）
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_script_path))))
+print(f"当前脚本路径： {current_script_path}")
+
+# 计算项目根目录（PackageWizard1.1）的路径
+# 当前脚本路径：d:\BaiduNetdiskDownload\PackageWizard1.1\package_core\PackageExtract\QFN_extract.py
+# 向上退3级：package_core -> PackageWizard1.1（根目录）
+root_dir = os.path.dirname(os.path.dirname(os.path.dirname(current_script_path)))
+print(f"计算出的根目录： {root_dir}")
+
 # 将根目录添加到Python的搜索路径中
-sys.path.append(root_dir)
-# # 打印关键信息用于排查
-# print("当前脚本路径：", current_script_path)
-# print("计算出的根目录：", root_dir)
-# print("Python搜索路径：", sys.path)  # 查看root_dir是否已被添加
-from package_core.PackageExtract import common_pipeline
+sys.path.insert(0, root_dir)
+
+# 同时添加当前脚本的父目录（package_core的路径）
+package_core_dir = os.path.dirname(os.path.dirname(current_script_path))
+sys.path.insert(0, package_core_dir)
+
+print(f"Python搜索路径前3个： {sys.path[:3]}")
+
+# 现在尝试导入
+try:
+    from package_core.PackageExtract import common_pipeline
+    print("成功导入 common_pipeline")
+except ImportError as e:
+    print(f"导入失败: {e}")
+    
+    # 尝试直接加载模块
+    import importlib.util
+    common_pipeline_path = os.path.join(package_core_dir, "PackageExtract", "common_pipeline.py")
+    print(f"尝试直接加载: {common_pipeline_path}")
+    
+    if os.path.exists(common_pipeline_path):
+        spec = importlib.util.spec_from_file_location("common_pipeline", common_pipeline_path)
+        common_pipeline_module = importlib.util.module_from_spec(spec)
+        sys.modules["common_pipeline"] = common_pipeline_module
+        spec.loader.exec_module(common_pipeline_module)
+        common_pipeline = common_pipeline_module
+        print("直接加载 common_pipeline 成功")
+    else:
+        raise
+# from package_core.PackageExtract import common_pipeline
 import os
 from package_core.PackageExtract.function_tool import (
     get_BGA_parameter_data
@@ -31,6 +60,8 @@ from package_core.PackageExtract.BGA_Function.pre_extract import (
     targeted_ocr
 )
 # from package_core.PackageExtract.BGA_Function import fill_triple_factor
+from package_core.Segment.Package_pretreat import *
+from package_core.PackageExtract.BGA_Function.Pin_process.QFN import *
 
 # 导入统一路径管理
 try:
@@ -103,7 +134,7 @@ def run_f4_pipeline(
     print("开始测试F4.7")
     triple_factor = match_triple_factor.match_arrow_pairs_with_yolox(L3, image_root)
     print("*****triple_factor*****", triple_factor)
-    # ## （整理尺寸线与文本，生成初始配对候选）
+    ## （整理尺寸线与文本，生成初始配对候选）
     # L3 = common_pipeline.preprocess_pairs_and_text(L3, key)
 
 
@@ -143,8 +174,9 @@ def run_f4_pipeline(
     print(f'bottom_pitch_x:{bottom_pitch_x}')
     print(f'bottom_pitch_y:{bottom_pitch_y}')
     
-    
-    
+    # X, Y = extract_QFN_pins()
+    # print(f'X:{X}')
+    # print(f'Y:{Y}')
     # QFN_TABLE = ['Pitch x (el)', 'Pitch y (e)', 'Number of pins along X', 'Number of pins along Y',
     #          'Package Height (A)', 'Standoff (A1)', 'Pull Back (p)', 'Body X (D)', 'Body Y (E)',
     #          'Lead style', 'Pin Length (L)', 'Lead width (b)', 'Lead Height (c)', 'Exclude Pins',
@@ -157,7 +189,7 @@ def run_f4_pipeline(
                       [''] + bottom_D2,[''] + bottom_E2]
     
     return parameter_list
-    #########################################################################
+    ######################################################################
     
     
     
@@ -183,9 +215,11 @@ def run_f4_pipeline(
 if __name__ == "__main__":
     run_f4_pipeline(
         image_root="D:\\BaiduNetdiskDownload\\PackageWizard1.1\\Result\\Package_extract\\data",
+        # image_root="D:\\BaiduNetdiskDownload\\PackageWizard1.1\\Result\\Package_extract\\data",
         package_class="QFN",
         key=0,
         test_mode=0
     )
+    
     # 格式：python 脚本路径 >> 输出文件名.txt
 # python -u "d:\cc\PackageWizard1.1\package_core\PackageExtract\BGA_Function\BGA_extract.py" >> console_output.txt

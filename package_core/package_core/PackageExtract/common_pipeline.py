@@ -697,7 +697,9 @@ def extract_sorted_dimensions(side_ocr_data_list, side_yolox_num):
     side_yolox_num: YOLO检测框数据，维度为[n, 4]
     
     返回:
-    side_A, side_A3, side_A1: 排序后的前3个max_medium_min数组（仅处理中间值<2的）
+    side_A: 中间值最大的尺寸数组
+    side_A3: 中间值次大的尺寸数组
+    side_A1: 中间值最小的尺寸数组
     """
     # 存储所有匹配的尺寸数组和对应的中间值
     matched_dimensions = []
@@ -736,36 +738,36 @@ def extract_sorted_dimensions(side_ocr_data_list, side_yolox_num):
     side_A3 = [0, 0, 0]
     side_A1 = [0, 0, 0]
     
-    # 按中间值从大到小排序并返回前3个
+    # 处理所有匹配的尺寸数组
     if matched_dimensions:
         # 按中间值从大到小排序
         sorted_dims = sorted(matched_dimensions, key=lambda x: x[1], reverse=True)
         
-        # 只取前3个完整的尺寸数组
-        top_dims = [dim_array for dim_array, _ in sorted_dims[:3]]
-        
-        # 如果不足3个，补充[0,0,0]
-        # while len(top_dims) < 3:
-        #     top_dims.append([0, 0, 0])
+        # 提取维度数组
+        dims_array = [dim_array for dim_array, _ in sorted_dims]
         
         # 根据不同的数量分配
-        if len(top_dims) >= 3:
+        if len(dims_array) >= 3:
             # 有3个或以上值
-            side_A = list(top_dims[0])
-            side_A3 = list(top_dims[-2])
-            side_A1 = list(top_dims[-1])
-        elif len(top_dims) == 2:
+            # side_A = 最大的（第一个）
+            # side_A3 = 次大的（第二个）
+            # side_A1 = 最小的（最后一个）
+            side_A = list(dims_array[0])
+            side_A3 = list(dims_array[1])
+            side_A1 = list(dims_array[-1])  # 注意：这里是最后一个，不是第三个！
+        elif len(dims_array) == 2:
             # 只有2个值
-            side_A = list(top_dims[0])
-            side_A1 = list(top_dims[1])
+            side_A = list(dims_array[0])    # 较大的
+            side_A1 = list(dims_array[1])   # 较小的
             side_A3 = [0, 0, 0]  # 没有第3个值
-        elif len(top_dims) == 1:
+        elif len(dims_array) == 1:
             # 只有1个值
-            side_A = list(top_dims[0])
+            side_A = list(dims_array[0])
             side_A1 = [0, 0, 0]
             side_A3 = [0, 0, 0]
     
     return side_A, side_A3, side_A1
+
 
 def extract_side_A_A1_A3(L3):
     side_yolox_num = find_list(L3, "side_yolox_num")
@@ -1989,173 +1991,241 @@ def extract_pin_dimensions(pin_boxs, bottom_ocr_data_list, triple_factor):
         
         return bottom_b, bottom_L
     
-    # 开始与pin_boxs尺寸进行比对
-    print("开始与pin_boxs尺寸进行比对...")
-    best_short_match = None
-    best_long_match = None
-    min_short_diff = float('inf')
-    min_long_diff = float('inf')
+    # 使用全局最优配对方法
+    print("开始使用全局最优配对方法...")
     
-    # 优先选择有arrow_pairs的元素
+    # 第一步：收集所有有arrow_pairs的元素及其引线距离
+    arrow_elements = []
     for idx, element in enumerate(all_b_elements):
         arrow_pairs = element.get('arrow_pairs', None)
-        
-        if arrow_pairs is None or len(arrow_pairs) == 0:
-            continue  # 跳过没有arrow_pairs的元素
-        
-        # 获取最后一位（引线之间距离）
-        try:
-            arrow_distance = float(arrow_pairs[-1])
-        except Exception as e:
-            continue
-        
-        # 计算与短边和长边的差异
-        short_diff = abs(arrow_distance - pin_short)
-        long_diff = abs(arrow_distance - pin_long)
-        
-        print(f"元素{idx}(有箭头): 箭头距离={arrow_distance:.2f}, "
-              f"与短边差异={short_diff:.2f}, 与长边差异={long_diff:.2f}")
-        
-        # 寻找与短边最相似的元素
-        if short_diff < min_short_diff:
-            min_short_diff = short_diff
-            best_short_match = element
-            print(f"  更新短边最佳匹配: 差异={short_diff:.2f}")
-        
-        # 寻找与长边最相似的元素
-        if long_diff < min_long_diff:
-            min_long_diff = long_diff
-            best_long_match = element
-            print(f"  更新长边最佳匹配: 差异={long_diff:.2f}")
-    
-    # 如果通过有arrow_pairs的元素没有找到匹配，再考虑没有arrow_pairs的元素
-    if best_short_match is None or best_long_match is None:
-        print("通过有arrow_pairs的元素未找到足够匹配，考虑无arrow_pairs的元素...")
-        for idx, element in enumerate(all_b_elements):
-            if element.get('arrow_pairs') is not None:
-                continue  # 跳过已经有arrow_pairs的元素
-            
-            # 对于没有arrow_pairs的元素，使用max_medium_min的标准值进行匹配
-            max_medium_min = element.get('max_medium_min', [])
-            if len(max_medium_min) < 2:
+        if arrow_pairs is not None and len(arrow_pairs) > 0:
+            try:
+                arrow_distance = float(arrow_pairs[-1])  # 最后一个引线距离
+                arrow_elements.append({
+                    'index': idx,
+                    'element': element,
+                    'arrow_distance': arrow_distance,
+                    'short_diff': abs(arrow_distance - pin_short),
+                    'long_diff': abs(arrow_distance - pin_long),
+                    'max_medium_min': element['max_medium_min']
+                })
+            except Exception as e:
+                print(f"元素{idx}获取引线距离时出错: {e}")
                 continue
-            
-            std_value = max_medium_min[1]  # 标准值
-            
-            # 计算与短边和长边的差异
-            short_diff = abs(std_value - pin_short)
-            long_diff = abs(std_value - pin_long)
-            
-            print(f"元素{idx}(无箭头): 标准值={std_value:.2f}, "
-                  f"与短边差异={short_diff:.2f}, 与长边差异={long_diff:.2f}")
-            
-            # 寻找与短边最相似的元素
-            if short_diff < min_short_diff:
-                min_short_diff = short_diff
-                best_short_match = element
-                print(f"  更新短边最佳匹配: 差异={short_diff:.2f}")
-            
-            # 寻找与长边最相似的元素
-            if long_diff < min_long_diff:
-                min_long_diff = long_diff
-                best_long_match = element
-                print(f"  更新长边最佳匹配: 差异={long_diff:.2f}")
     
-    # 使用阈值判断是否"很相似"
-    similarity_threshold = 0.25  # 从10%放宽到20%的误差
-    pin_short_threshold = pin_short * similarity_threshold
-    pin_long_threshold = pin_long * similarity_threshold
+    print(f"找到 {len(arrow_elements)} 个有箭头的元素")
+    for ae in arrow_elements:
+        print(f"  元素{ae['index']}: 箭头距离={ae['arrow_distance']:.2f}, "
+              f"短边差异={ae['short_diff']:.2f}, 长边差异={ae['long_diff']:.2f}")
     
-    print(f"\n相似性阈值: 短边={pin_short_threshold:.2f}, 长边={pin_long_threshold:.2f}")
-    
-    # 记录是否通过引线找到匹配
-    short_matched = False
-    long_matched = False
-    
-    # 判断短边是否有匹配
-    if best_short_match is not None and min_short_diff <= pin_short_threshold:
-        bottom_b = best_short_match['max_medium_min'].copy()
-        short_matched = True
-        has_arrow = best_short_match.get('arrow_pairs') is not None
-        print(f"短边找到{'有箭头' if has_arrow else '无箭头'}匹配: max_medium_min={bottom_b}, 差异={min_short_diff:.2f}")
-    else:
-        # 没有匹配，使用标准值排序取最小
-        print(f'短边无相似匹配, 最小差异={min_short_diff:.2f}, 阈值={pin_short_threshold:.2f}')
-        if all_b_elements:
-            bottom_b = all_b_elements[0]['max_medium_min'].copy()
-            print(f"短边使用标准值排序最小: max_medium_min={bottom_b}")
-    
-    # 判断长边是否有匹配
-    if best_long_match is not None and min_long_diff <= pin_long_threshold:
-        # 如果长边匹配的元素与短边匹配的元素相同，且短边已经匹配，则我们需要找另一个元素
-        if best_long_match == best_short_match and short_matched:
-            print("长边匹配的元素与短边相同，且短边已匹配，为长边寻找次佳匹配")
-            # 在剩余元素中寻找与长边最相似的元素
-            second_best_long_match = None
-            second_min_long_diff = float('inf')
-            
-            for idx, element in enumerate(all_b_elements):
-                if element == best_short_match:
-                    continue  # 跳过已经被短边使用的元素
-                    
-                # 根据是否有arrow_pairs选择比较方式
-                if element.get('arrow_pairs') is not None:
-                    try:
-                        arrow_distance = float(element['arrow_pairs'][-1])
-                        long_diff = abs(arrow_distance - pin_long)
-                    except:
-                        continue
-                else:
-                    max_medium_min = element.get('max_medium_min', [])
-                    if len(max_medium_min) < 2:
-                        continue
-                    long_diff = abs(max_medium_min[1] - pin_long)
+    # 如果没有有箭头的元素，则使用标准值匹配
+    if not arrow_elements:
+        print("没有找到有箭头的元素，使用标准值匹配")
+        # 收集所有元素的标准值
+        std_elements = []
+        for idx, element in enumerate(all_b_elements):
+            max_medium_min = element.get('max_medium_min', [])
+            if len(max_medium_min) >= 2:
+                std_value = max_medium_min[1]  # 标准值
+                std_elements.append({
+                    'index': idx,
+                    'element': element,
+                    'std_value': std_value,
+                    'short_diff': abs(std_value - pin_short),
+                    'long_diff': abs(std_value - pin_long)
+                })
+        
+        # 寻找最佳配对
+        best_pair = None
+        min_total_diff = float('inf')
+        
+        # 尝试所有可能的配对组合
+        for i in range(len(std_elements)):
+            for j in range(len(std_elements)):
+                if i == j:
+                    continue  # 跳过相同元素
                 
-                if long_diff < second_min_long_diff:
-                    second_min_long_diff = long_diff
-                    second_best_long_match = element
-            
-            # 检查次佳匹配是否满足阈值
-            if second_best_long_match is not None and second_min_long_diff <= pin_long_threshold:
-                bottom_L = second_best_long_match['max_medium_min'].copy()
-                long_matched = True
-                has_arrow = second_best_long_match.get('arrow_pairs') is not None
-                print(f"长边找到{'有箭头' if has_arrow else '无箭头'}次佳匹配: max_medium_min={bottom_L}, 差异={second_min_long_diff:.2f}")
-            else:
-                # 没有次佳匹配，使用标准值排序
-                print(f'长边无次佳相似匹配')
-                if len(all_b_elements) >= 2:
-                    # 使用排序后的最后一个元素（最大值）
-                    bottom_L = all_b_elements[-1]['max_medium_min'].copy()
-                    long_matched = False
-                    print(f"长边使用标准值排序最大: max_medium_min={bottom_L}")
-                elif all_b_elements:
-                    bottom_L = all_b_elements[0]['max_medium_min'].copy()
-                    long_matched = False
-                    print(f"长边只有一个元素可用，使用第一个: max_medium_min={bottom_L}")
+                se_i = std_elements[i]
+                se_j = std_elements[j]
+                
+                # 计算总差异
+                total_diff = se_i['short_diff'] + se_j['long_diff']
+                
+                if total_diff < min_total_diff:
+                    min_total_diff = total_diff
+                    best_pair = (se_i, se_j)
+                    print(f"  找到潜在配对: 元素{se_i['index']}(短边) + 元素{se_j['index']}(长边), "
+                          f"总差异={total_diff:.2f}")
+        
+        if best_pair:
+            short_match, long_match = best_pair
+            bottom_b = short_match['element']['max_medium_min'].copy()
+            bottom_L = long_match['element']['max_medium_min'].copy()
+            print(f"找到最佳配对: 元素{short_match['index']}匹配短边(标准值={short_match['std_value']:.2f}), "
+                  f"元素{long_match['index']}匹配长边(标准值={long_match['std_value']:.2f})")
         else:
-            bottom_L = best_long_match['max_medium_min'].copy()
-            long_matched = True
-            has_arrow = best_long_match.get('arrow_pairs') is not None
-            print(f"长边找到{'有箭头' if has_arrow else '无箭头'}匹配: max_medium_min={bottom_L}, 差异={min_long_diff:.2f}")
+            # 没有找到配对，使用默认方法
+            print("未找到配对，使用默认方法")
+            if std_elements:
+                std_elements.sort(key=lambda x: x['short_diff'])
+                bottom_b = std_elements[0]['element']['max_medium_min'].copy()
+                
+                # 为长边寻找最佳匹配
+                if len(std_elements) > 1:
+                    # 跳过已使用的元素
+                    remaining = [se for se in std_elements if se['index'] != std_elements[0]['index']]
+                    remaining.sort(key=lambda x: x['long_diff'])
+                    bottom_L = remaining[0]['element']['max_medium_min'].copy()
+                else:
+                    bottom_L = std_elements[0]['element']['max_medium_min'].copy()
+    
     else:
-        # 没有匹配，使用标准值排序
-        print(f'长边无相似匹配, 最小差异={min_long_diff:.2f}, 阈值={pin_long_threshold:.2f}')
-        if len(all_b_elements) >= 2:
-            # 使用排序后的最后一个元素（最大值）
-            bottom_L = all_b_elements[-1]['max_medium_min'].copy()
-            long_matched = False
-            print(f"长边使用标准值排序最大: max_medium_min={bottom_L}")
-        elif all_b_elements:
-            bottom_L = all_b_elements[0]['max_medium_min'].copy()
-            long_matched = False
-            print(f"长边只有一个元素可用，使用第一个: max_medium_min={bottom_L}")
+        # 使用全局最优配对方法（不依赖阈值）
+        print("使用全局最优配对方法（不考虑阈值）...")
+        
+        best_pair = None
+        min_total_diff = float('inf')
+        best_pair_info = ""
+        
+        # 尝试所有可能的配对组合
+        for i in range(len(arrow_elements)):
+            for j in range(len(arrow_elements)):
+                if i == j:
+                    continue  # 跳过相同元素
+                
+                ae_i = arrow_elements[i]
+                ae_j = arrow_elements[j]
+                
+                # 计算总差异
+                total_diff = ae_i['short_diff'] + ae_j['long_diff']
+                
+                # 记录当前配对信息
+                pair_info = (f"元素{ae_i['index']}(箭头距离={ae_i['arrow_distance']:.2f})匹配短边 + "
+                            f"元素{ae_j['index']}(箭头距离={ae_j['arrow_distance']:.2f})匹配长边, "
+                            f"总差异={total_diff:.2f}")
+                
+                if total_diff < min_total_diff:
+                    min_total_diff = total_diff
+                    best_pair = (ae_i, ae_j)
+                    best_pair_info = pair_info
+                    print(f"  更新最佳配对: {pair_info}")
+        
+        # ============= 新增逻辑：检查全局配对的总差异 =============
+        if min_total_diff > 10:
+            print(f"\n警告: 全局配对最小总差异({min_total_diff:.2f}) > 10，认为配对不可靠")
+            print("切换到单个配对方法：bottom_b取排序最小值，bottom_L单独匹配最接近的长边")
+            
+            # bottom_b取排序最小值（标准值最小）
+            if all_b_elements:
+                bottom_b = all_b_elements[0]['max_medium_min'].copy()
+                print(f"bottom_b取排序最小值: 元素0, max_medium_min={bottom_b}")
+            
+            # bottom_L单独匹配最接近的长边
+            # 使用有箭头的元素优先
+            if arrow_elements:
+                # 为bottom_L寻找最接近pin_long的元素
+                arrow_elements.sort(key=lambda x: x['long_diff'])
+                best_L_match = arrow_elements[0]
+                bottom_L = best_L_match['element']['max_medium_min'].copy()
+                print(f"bottom_L单独匹配: 元素{best_L_match['index']}(箭头距离={best_L_match['arrow_distance']:.2f}) "
+                      f"最接近长边{pin_long:.2f}, 差异={best_L_match['long_diff']:.2f}")
+            else:
+                # 如果没有箭头元素，使用标准值匹配
+                std_elements = []
+                for idx, element in enumerate(all_b_elements):
+                    max_medium_min = element.get('max_medium_min', [])
+                    if len(max_medium_min) >= 2:
+                        std_value = max_medium_min[1]
+                        std_elements.append({
+                            'index': idx,
+                            'element': element,
+                            'std_value': std_value,
+                            'long_diff': abs(std_value - pin_long)
+                        })
+                
+                if std_elements:
+                    std_elements.sort(key=lambda x: x['long_diff'])
+                    best_L_match = std_elements[0]
+                    bottom_L = best_L_match['element']['max_medium_min'].copy()
+                    print(f"bottom_L单独匹配: 元素{best_L_match['index']}(标准值={best_L_match['std_value']:.2f}) "
+                          f"最接近长边{pin_long:.2f}, 差异={best_L_match['long_diff']:.2f}")
+            
+        # ============= 原有的配对逻辑 =============
+        elif best_pair:
+            short_match, long_match = best_pair
+            bottom_b = short_match['element']['max_medium_min'].copy()
+            bottom_L = long_match['element']['max_medium_min'].copy()
+            print(f"找到全局最佳配对: {best_pair_info}")
+            
+            # 检查是否有非常相似的配对（总差异接近最小）
+            similar_pairs = []
+            threshold_multiplier = 1.5  # 总差异在最小差异的1.5倍内都认为是相似的
+            
+            for i in range(len(arrow_elements)):
+                for j in range(len(arrow_elements)):
+                    if i == j:
+                        continue
+                    
+                    ae_i = arrow_elements[i]
+                    ae_j = arrow_elements[j]
+                    
+                    total_diff = ae_i['short_diff'] + ae_j['long_diff']
+                    
+                    if total_diff <= min_total_diff * threshold_multiplier:
+                        similar_pairs.append((ae_i, ae_j, total_diff))
+            
+            if len(similar_pairs) > 1:
+                print(f"找到 {len(similar_pairs)} 个相似配对:")
+                for idx, (ae_i, ae_j, diff) in enumerate(similar_pairs):
+                    print(f"  配对{idx}: 元素{ae_i['index']}(短边) + 元素{ae_j['index']}(长边), 总差异={diff:.2f}")
+                
+                # 如果存在多个相似配对，检查是否有"一箭双雕"的情况
+                # 即一个元素同时与短边和长边都很接近
+                for ae_i, ae_j, diff in similar_pairs:
+                    if ae_i['index'] == ae_j['index']:
+                        continue  # 跳过相同元素（虽然不可能）
+                    
+                    # 检查是否有一个元素同时与短边和长边都很接近
+                    if ae_i['short_diff'] < pin_short * 0.1 and ae_i['long_diff'] < pin_long * 0.1:
+                        print(f"警告: 元素{ae_i['index']}同时与短边和长边都很接近！")
+                        print(f"      短边差异={ae_i['short_diff']:.2f}, 长边差异={ae_i['long_diff']:.2f}")
+                        print(f"      这可能需要特殊的处理逻辑")
+        else:
+            # 没有找到配对，使用标准值匹配
+            print("未找到配对，使用标准值匹配")
+            arrow_elements.sort(key=lambda x: x['short_diff'])
+            bottom_b = arrow_elements[0]['element']['max_medium_min'].copy()
+            
+            # 为长边寻找最佳匹配
+            if len(arrow_elements) > 1:
+                # 跳过已使用的元素
+                remaining = [ae for ae in arrow_elements if ae['index'] != arrow_elements[0]['index']]
+                remaining.sort(key=lambda x: x['long_diff'])
+                bottom_L = remaining[0]['element']['max_medium_min'].copy()
+            else:
+                bottom_L = arrow_elements[0]['element']['max_medium_min'].copy()
     
     print(f"\n最终结果: bottom_b={bottom_b}, bottom_L={bottom_L}")
     print("=== extract_pin_dimensions 执行结束 ===\n")
     
+    # 最终检查：如果bottom_b >= bottom_L（标准值），说明配对有问题，使用保守策略
+    if len(bottom_b) > 1 and len(bottom_L) > 1 and bottom_b[1] >= bottom_L[1]:
+        print("警告: bottom_b >= bottom_L，不符合常理，使用保守策略")
+        print("bottom_b取排序最小值，bottom_L取排序最大值（但不与bottom_b相同）")
+        
+        if all_b_elements:
+            # bottom_b取排序最小值
+            bottom_b = all_b_elements[0]['max_medium_min'].copy()
+            
+            # bottom_L取排序最大值（如果不是同一个元素）
+            if len(all_b_elements) > 1:
+                bottom_L = all_b_elements[-1]['max_medium_min'].copy()
+            else:
+                bottom_L = all_b_elements[0]['max_medium_min'].copy()
+        
+        print(f"修正后结果: bottom_b={bottom_b}, bottom_L={bottom_L}")
+    
     return bottom_b, bottom_L
-
 
 
 def extract_bottom_b_L(L3,triple_factor,pin_boxs):

@@ -15,7 +15,7 @@ from package_core.PackageExtract.BGA_Function.Pin_process.SOP.SOP_extract_pins i
 matplotlib.use('TkAgg')
 # 外部文件
 from package_core.Segment.Segment_function import *
-from package_core.PackageExtract import QFP_extract
+from package_core.PackageExtract.QFP_Function import QFP_extract
 from package_core.PackageExtract import QFN_extract
 from package_core.PackageExtract.SOP_Function import SOP_extract
 from package_core.PackageExtract.SON_Function import SON_extract
@@ -389,7 +389,7 @@ def package_indentify(package_type, current_page):
     move_files(SEGMENT_RESULT, destination_folder_path)
     # 按照类型进行封装图信息提取
     if package_type == 'QFP':
-        out_put = QFP_extract.extract_package(package_type, current_page)
+        out_put = QFP_extract.run_f4_pipeline_QFP(package_type, current_page)
     elif package_type == 'QFN':
         print('QFN')
         out_put = QFN_extract.run_f4_pipeline(destination_folder_path, package_type)

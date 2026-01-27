@@ -502,7 +502,7 @@ class DetectThread(QThread):
             # --- 阶段二 ---
             # 按顺序执行管道的每一步
             raw_detr_results = pipeline.step2_run_detr_detection(page_list)
-            modified_detr_results = pipeline.step3_match_keywords(raw_detr_results, page_list)
+            modified_detr_results = pipeline.step3_match_keywords(raw_detr_results, page_list, rotation_dict=None)
             _, final_data, have_page , _ = pipeline.step4_group_package_components(modified_detr_results)
             self.final_package_data = final_data if final_data is not None else []
             self.final_have_page = have_page if have_page is not None else []
@@ -612,62 +612,97 @@ class RecoThread(QThread):
                     try:
                         # 重新执行 Step 2, 3, 4
                         raw_detr = pipeline.step2_run_detr_detection(target_page_list, skip_conversion=True)
-                        mod_detr = pipeline.step3_match_keywords(raw_detr, target_page_list)
+
+                        current_rotation_map = {self.current_page: -rot}
+                        mod_detr = pipeline.step3_match_keywords(raw_detr, target_page_list, rotation_dict=current_rotation_map)
                         _, final_data, _, _ = pipeline.step4_group_package_components(mod_detr)
 
                         if final_data and len(final_data) > 0:
                             print("INFO: 坐标修正成功，更新封装数据。")
 
-                            target_page_num = self.current_page + 1  # 0-based -> 1-based（final_data里的page看起来是1-based）
+                            # ==================== 筛选最佳匹配的 package ====================
+                            target_page_num = self.current_page + 1  # 假设 final_data 是 1-based
                             picked = None
 
-                            # 1) 最优先：严格等于 current_page+1
+                            # 1.1) 最优先：严格等于 current_page+1
                             for pkg in final_data:
                                 if pkg and pkg.get("page") == target_page_num:
                                     picked = pkg
                                     break
 
-                            # 2) 兜底：再尝试 current_page（以防 page 是 0-based）
+                            # 1.2) 兜底：再尝试 current_page（以防 page 是 0-based）
                             if picked is None:
                                 for pkg in final_data:
                                     if pkg and pkg.get("page") == self.current_page:
                                         picked = pkg
                                         break
 
-                            # 3) 兜底：再用 ±1
+                            # 1.3) 兜底：再用 ±1
                             if picked is None:
                                 for pkg in final_data:
-                                    if pkg and pkg.get("page") in {target_page_num - 1, target_page_num + 1}:
+                                    p = pkg.get("page")
+                                    if p is not None and p in {target_page_num - 1, target_page_num + 1}:
                                         picked = pkg
                                         break
 
                             if picked is None:
-                                raise ValueError(
-                                    f"旋转后没找到当前页package: target_page_num={target_page_num}, "
-                                    f"pages={[p.get('page') for p in final_data]}"
-                                )
+                                # 如果实在找不到，只能打印警告并取第一个，防止崩溃
+                                print(f"WARN: 旋转后未精确匹配到页码 {target_page_num}，强制使用第一个检测结果。")
+                                picked = final_data[0]
 
-                            self.current_package = picked  # ✅ 用挑出来的，而不是 final_data[0]
+                            # ==================== 恢复相邻页组件 ====================
+                            # picked 是新的检测数据，但它丢失了上一轮可能关联到的相邻页表格(Form)。
+                            # 我们需要从旧的 self.current_package 中把它们找回来。
 
-                            # 下面你原来的防御性补全保留
-                            pkg = self.current_package or {}
-                            if pkg.get("reco_content") is None:
-                                pkg["reco_content"] = []
-                            if pkg.get("part_content") is None:
-                                pkg["part_content"] = []
-                            self.current_package = pkg
+                            # 2.1 确保新数据有 part_content 列表
+                            if picked.get("part_content") is None:
+                                picked["part_content"] = []
 
+                            # 2.2. 清理新数据中的表格组件 (因为旋转后的表格坐标可能不匹配PDF)
+                            #    保留非 Form 组件 (如果有的话)
+                            picked["part_content"] = [
+                                p for p in picked["part_content"]
+                                if p.get("part_name") != "Form"
+                            ]
+
+                            # 2.3. 从旧数据中提取 **所有** 表格组件 (Form)
+                            #    无论它是当前页还是相邻页，都直接复用旧的，因为用户确认旧表格数据是正确的。
+                            old_parts = self.current_package.get("part_content", [])
+                            old_forms = [
+                                p for p in old_parts
+                                if p.get("part_name") == "Form"
+                            ]
+
+                            # 2.4. 合并回去并排序
+                            if old_forms:
+                                picked["part_content"].extend(old_forms)
+                                # 按页码排序，确保列表整洁 (e.g. 36 -> 37 -> 38)
+                                picked["part_content"].sort(key=lambda x: int(x.get("page", 0)))
+                                print(f"INFO: 已完全恢复 {len(old_forms)} 个旧表格组件(Form)，并丢弃了旋转后的新表格数据。")
+
+                            # ==================== 更新全局数据 ====================
+                            self.current_package = picked  # ✅ 正式覆盖
+
+                            # 防御性补全
+                            if self.current_package.get("reco_content") is None:
+                                self.current_package["reco_content"] = []
+                            if self.current_package.get("part_content") is None:
+                                self.current_package["part_content"] = []
+
+                            # ==================== 执行后续处理 ====================
                             manage_data, _ = manage_json(self.current_package)
                             package_information = manage_data[0]
+
                             if not package_information:
-                                raise ValueError("manage_json returned empty package_information")
+                                print("ERROR: manage_json 返回空信息，跳过切图")
+                            else:
+                                # ✅ (你的代码) 动态获取实际存在的 key，避免 Key Error
+                                use_page = next(iter(package_information.keys()))
+                                print(f"DEBUG: package_information keys = {list(package_information.keys())}, use_page = {use_page}")
 
-                            use_page = next(iter(package_information.keys()))  # 关键：用 dict 里实际存在的 key
-                            print(
-                                f"DEBUG package_information keys = {list(package_information.keys())} use_page = {use_page}")
-
-                            package_process(use_page, package_information)# ✅ 用 use_page，而不是 self.current_page
-                            print("INFO: 旋转修正完成，BGA 提取完毕。")
+                                # ✅ 用 use_page 进行切图
+                                package_process(use_page, package_information)
+                                print("INFO: 旋转修正完成，BGA 提取完毕。")
 
                         else:
                             print("ERROR: 旋转后 DETR 未检测到有效封装，将使用原始数据继续。")
